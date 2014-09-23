@@ -77,7 +77,6 @@ public class NioEventLoop implements EventLoop {
         scheduler.schedule(delay, task);
     }
 
-    @Override
     public void run() throws IOException {
         final Selector selector = Selector.open();
 

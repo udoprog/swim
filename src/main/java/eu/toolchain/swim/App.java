@@ -5,7 +5,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
-import eu.toolchain.swim.async.EventLoop;
 import eu.toolchain.swim.async.nio.NioEventLoop;
 
 public class App {
@@ -19,7 +18,7 @@ public class App {
          */
         final Provider<Boolean> alive = Providers.ofValue(true);
 
-        final EventLoop eventLoop = new NioEventLoop();
+        final NioEventLoop eventLoop = new NioEventLoop();
 
         final Random random = new Random(0);
 
