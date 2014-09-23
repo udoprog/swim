@@ -12,7 +12,6 @@ import java.util.List;
 import java.util.Set;
 
 import lombok.extern.slf4j.Slf4j;
-import eu.toolchain.swim.GossipService;
 import eu.toolchain.swim.async.BindException;
 import eu.toolchain.swim.async.DatagramBindChannel;
 import eu.toolchain.swim.async.DatagramBindListener;
@@ -67,14 +66,19 @@ public class NioEventLoop implements EventLoop {
     }
 
     @Override
-    public void bindUDP(final String address, final int port, final GossipService gossipService)
+    public void bindUDP(final String host, final int port, final DatagramBindListener listener)
             throws BindException {
-        bindUDP(new InetSocketAddress(address, port), gossipService);
+        bindUDP(new InetSocketAddress(host, port), listener);
     }
 
     @Override
     public void schedule(final long delay, final Task task) {
         scheduler.schedule(delay, task);
+    }
+
+    @Override
+    public long now() {
+        return System.currentTimeMillis();
     }
 
     public void run() throws IOException {

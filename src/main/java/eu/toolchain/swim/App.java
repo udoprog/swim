@@ -9,8 +9,8 @@ import eu.toolchain.swim.async.nio.NioEventLoop;
 
 public class App {
     public static void main(final String[] args) throws Exception {
-        final List<Node> seeds = new ArrayList<>();
-        seeds.add(new Node(new InetSocketAddress("localhost", 3334)));
+        final List<InetSocketAddress> seeds = new ArrayList<>();
+        seeds.add(new InetSocketAddress("localhost", 3334));
 
         /*
          * if this provider provides the value 'false', this node will be

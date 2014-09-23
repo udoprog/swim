@@ -3,8 +3,8 @@ package eu.toolchain.swim.messages;
 import java.util.Collection;
 import java.util.UUID;
 
-import eu.toolchain.swim.NodeState;
 import lombok.Data;
+import eu.toolchain.swim.NodeState;
 
 @Data
 public class Ack {
@@ -16,6 +16,6 @@ public class Ack {
      * An ACK can explicitly say that a peer is 'dead'.
      */
     public NodeState toNodeState() {
-        return alive ? NodeState.ALIVE : NodeState.CONFIRM;
+        return alive ? NodeState.ALIVE : NodeState.DEAD;
     }
 }

@@ -3,12 +3,12 @@ package eu.toolchain.swim;
 import java.net.InetSocketAddress;
 import java.util.List;
 
-import lombok.RequiredArgsConstructor;
+import lombok.Data;
 
 public interface NodeFilter {
     public boolean matches(NodeData data);
 
-    @RequiredArgsConstructor
+    @Data
     public static class Not implements NodeFilter {
         private final NodeFilter delegate;
 
@@ -18,17 +18,17 @@ public interface NodeFilter {
         }
     }
 
-    @RequiredArgsConstructor
+    @Data
     public static class Address implements NodeFilter {
         private final InetSocketAddress address;
 
         @Override
         public boolean matches(NodeData data) {
-            return data.getNode().getAddress().equals(address);
+            return data.getAddress().equals(address);
         }
     }
 
-    @RequiredArgsConstructor
+    @Data
     public static class State implements NodeFilter {
         private final NodeState state;
 
@@ -38,7 +38,7 @@ public interface NodeFilter {
         }
     }
 
-    @RequiredArgsConstructor
+    @Data
     public static class Or implements NodeFilter {
         private final List<NodeFilter> delegates;
 
@@ -53,7 +53,7 @@ public interface NodeFilter {
         }
     }
 
-    @RequiredArgsConstructor
+    @Data
     public static class And implements NodeFilter {
         private final List<NodeFilter> delegates;
 
@@ -68,7 +68,7 @@ public interface NodeFilter {
         }
     }
 
-    @RequiredArgsConstructor
+    @Data
     public static class Any implements NodeFilter {
         @Override
         public boolean matches(NodeData data) {

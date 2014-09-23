@@ -5,20 +5,23 @@ import java.net.SocketAddress;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 import java.util.Random;
 import java.util.Set;
-import java.util.SortedSet;
-import java.util.TreeSet;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import eu.toolchain.swim.async.DatagramBindChannel;
+import eu.toolchain.swim.async.EventLoop;
+import eu.toolchain.swim.async.Task;
 import eu.toolchain.swim.messages.Ack;
 import eu.toolchain.swim.messages.Gossip;
 import eu.toolchain.swim.messages.Ping;
@@ -30,27 +33,65 @@ import eu.toolchain.swim.serializers.Serializer;
 
 @Slf4j
 @Data
-public class GossipServiceImpl {
+public class GossipServiceListener {
     private static final byte PING = 0;
     private static final byte ACK = 1;
     private static final byte PINGREQ = 2;
 
+    private final EventLoop eventLoop;
     private final DatagramBindChannel channel;
-    private final List<Node> seeds;
+    private final List<InetSocketAddress> seeds;
     private final Provider<Boolean> alive;
     private final Random random;
 
     private final Map<InetSocketAddress, NodeData> nodes = new ConcurrentHashMap<>();
     private final Set<Gossip> gossip = new HashSet<>();
+
+    /**
+     * Maintained lists of random pools to make sure entries are fetched uniformly randomly.
+     */
+    private final Map<NodeFilter, Queue<NodeData>> randomPools = new HashMap<>();
+
     /* pending pings */
     private Map<UUID, PendingOperation> pending = new HashMap<>();
 
     private final long pendingThreshold = 2000;
     private final long payloadLimit = 20;
+
     // how many times we need to have gossiped about a node before we remove it.
     private long inc = 0;
 
     private final ByteBuffer output = ByteBuffer.allocate(0xffff);
+
+    public void start() {
+        for (InetSocketAddress seed : seeds)
+            nodes.put(seed, new NodeData(eventLoop, seed));
+
+        pingRandom();
+
+        eventLoop.schedule(2000, new Task() {
+            @Override
+            public void run() throws Exception {
+                expireOperations(eventLoop.now());
+                pingRandom();
+                eventLoop.schedule(2000, this);
+            }
+        });
+    }
+
+    private void pingRandom() {
+        final Collection<NodeData> peers = randomPeers(10, NodeFilters.any());
+
+        log.info("{}: {}: peers = {}", eventLoop.now(), channel.getBindAddress(), peers);
+
+        for (NodeData node : peers) {
+            try {
+                sendPing(node.getAddress());
+            } catch (Exception e) {
+                log.error("failed to send ping: " + node, e);
+            }
+        }
+    }
 
     private void expireOperations(final long now) throws Exception {
         final Set<UUID> expired = new HashSet<>();
@@ -59,7 +100,7 @@ public class GossipServiceImpl {
             final UUID id = entry.getKey();
             final PendingOperation op = entry.getValue();
 
-            if ((op.getStarted() + pendingThreshold) < now)
+            if ((op.getStarted() + pendingThreshold) <= now)
                 expired.add(id);
         }
 
@@ -76,7 +117,8 @@ public class GossipServiceImpl {
                     continue;
                 }
 
-                this.nodes.put(p.getTarget(), data.state(NodeState.CONFIRM));
+                log.info("{}: {}: expired ping: {}", this.channel.getBindAddress(), now, p);
+                this.nodes.put(p.getTarget(), data.state(NodeState.SUSPECT));
             }
         }
     }
@@ -150,8 +192,6 @@ public class GossipServiceImpl {
                 return data.state(NodeState.SUSPECT).inc(inc);
 
             return null;
-        case CONFIRM:
-            return data.state(NodeState.CONFIRM);
         default:
             return null;
         }
@@ -223,7 +263,7 @@ public class GossipServiceImpl {
         final UUID id = UUID.randomUUID();
         send(PINGREQ, peer, new PingReq(id, target, buildPayloads()),
                 PingReqSerializer.get());
-        pending.put(id, new PendingPing(System.currentTimeMillis(), target,
+        pending.put(id, new PendingPing(eventLoop.now(), target,
                 true));
     }
 
@@ -231,14 +271,14 @@ public class GossipServiceImpl {
             final InetSocketAddress source, final UUID pingId) throws Exception {
         final UUID id = UUID.randomUUID();
         send(PING, target, new Ping(id, buildPayloads()), PingSerializer.get());
-        pending.put(id, new PendingPingReq(System.currentTimeMillis(), target,
+        pending.put(id, new PendingPingReq(eventLoop.now(), target,
                 pingId, source));
     }
 
     private void sendPing(final InetSocketAddress target) throws Exception {
         final UUID id = UUID.randomUUID();
         send(PING, target, new Ping(id, buildPayloads()), PingSerializer.get());
-        pending.put(id, new PendingPing(System.currentTimeMillis(), target,
+        pending.put(id, new PendingPing(eventLoop.now(), target,
                 false));
     }
 
@@ -248,29 +288,36 @@ public class GossipServiceImpl {
     }
 
     private Collection<NodeData> randomPeers(long k, NodeFilter filter) {
-        final List<NodeData> source = peers(filter);
-        final ArrayList<NodeData> peers = new ArrayList<>(source);
+        final ArrayList<NodeData> result = new ArrayList<>();
 
-        final Set<NodeData> targets = new HashSet<>();
+        Queue<NodeData> nodes = randomPools.get(filter);
 
-        if (peers.isEmpty())
-            return targets;
+        while (result.size() < k) {
+            if (nodes != null) {
+                while (!nodes.isEmpty())
+                    result.add(nodes.poll());
+            }
 
-        for (int i = 0; i < k; i++)
-            targets.add(peers.get(random.nextInt(peers.size())));
+            final List<NodeData> source = peers(filter);
+            Collections.shuffle(source, random);
+            nodes = new LinkedList<>(source);
+        }
 
-        return targets;
+        if (nodes != null && !nodes.isEmpty())
+            randomPools.put(filter, nodes);
+
+        return new HashSet<>(result);
     }
 
     private List<NodeData> peers(NodeFilter filter) {
-        final SortedSet<NodeData> result = new TreeSet<>();
+        final List<NodeData> result = new ArrayList<>();
 
         for (final NodeData p : this.nodes.values()) {
             if (filter.matches(p))
                 result.add(p);
         }
 
-        return new ArrayList<>(result);
+        return result;
     }
 
     private <T> void send(byte type, InetSocketAddress target, T data,

@@ -7,7 +7,9 @@ import java.util.LinkedList;
 
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 @RequiredArgsConstructor
 public class Scheduler {
     private final long threshold;
@@ -29,15 +31,20 @@ public class Scheduler {
                 if (Math.abs(next.getWhen() - this.when) > threshold)
                     break;
 
-                next.run();
+                try {
+                    next.run();
+                } catch (Exception e) {
+                    log.error("failed to execute task", e);
+                }
+
                 iterator.remove();
             }
         }
     }
 
-    public void schedule(final long when, final Task runnable) {
+    public void schedule(final long when, final Task task) {
         final long now = System.currentTimeMillis();
-        newTasks.add(new ScheduledOperation(now + when, runnable));
+        newTasks.add(new ScheduledOperation(now + when, task));
     }
 
     private void compact() {

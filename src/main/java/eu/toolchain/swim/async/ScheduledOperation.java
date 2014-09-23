@@ -7,8 +7,8 @@ public class ScheduledOperation implements Comparable<ScheduledOperation> {
     private final long when;
     private final Task task;
 
-    public void run() {
-        this.task.run();
+    public void run() throws Exception {
+        task.run();
     }
 
     @Override

@@ -1,5 +1,5 @@
 package eu.toolchain.swim.async;
 
 public interface Task {
-    void run();
+    void run() throws Exception;
 }

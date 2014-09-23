@@ -1,13 +1,14 @@
 package eu.toolchain.swim.async.simulator;
 
 import lombok.Data;
+import eu.toolchain.swim.async.Task;
 
 @Data
 public class PendingTask {
     private static final Comparator comparator = new Comparator();
 
     private final long tick;
-    private final Runnable task;
+    private final Task task;
 
     public static Comparator comparator() {
         return comparator;

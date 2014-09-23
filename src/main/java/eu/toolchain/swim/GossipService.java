@@ -6,41 +6,20 @@ import java.util.List;
 import java.util.Random;
 
 import lombok.Data;
-import lombok.extern.slf4j.Slf4j;
 import eu.toolchain.swim.async.DatagramBindChannel;
 import eu.toolchain.swim.async.DatagramBindListener;
 import eu.toolchain.swim.async.EventLoop;
 import eu.toolchain.swim.async.ReceivePacket;
-import eu.toolchain.swim.async.Task;
 
 @Data
-@Slf4j
 public class GossipService implements DatagramBindListener {
-    private final List<Node> seeds;
+    private final List<InetSocketAddress> seeds;
     private final Provider<Boolean> alive;
     private final Random random;
 
     @Override
     public void ready(final EventLoop eventLoop, final DatagramBindChannel channel) {
-        final Task expire = new Task() {
-            @Override
-            public void run() {
-                log.info("EXPIRE!");
-                eventLoop.schedule(2000, this);
-            }
-        };
-
-        final Task expire2 = new Task() {
-            @Override
-            public void run() {
-                log.info("EXPIRE 2");
-            }
-        };
-
-        eventLoop.schedule(2000, expire);
-        eventLoop.schedule(4000, expire2);
-
-        final GossipServiceImpl session = new GossipServiceImpl(channel, seeds, alive,
+        final GossipServiceListener session = new GossipServiceListener(eventLoop, channel, seeds, alive,
                 random);
 
         channel.register(new ReceivePacket() {
@@ -50,5 +29,7 @@ public class GossipService implements DatagramBindListener {
                 session.read(source, packet);
             }
         });
+
+        session.start();
     }
 }
