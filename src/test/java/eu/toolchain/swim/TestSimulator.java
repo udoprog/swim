@@ -31,20 +31,24 @@ public class TestSimulator {
         final List<InetSocketAddress> seeds = new ArrayList<>();
         seeds.add(a);
         seeds.add(b);
-
-        loop.bindUDP(a, new GossipService(seeds, alive,
-                random));
-        loop.bindUDP(b, new GossipService(seeds, alive,
-                random));
-        loop.bindUDP(c, new GossipService(seeds, alive,
-                random));
+        seeds.add(c);
 
         final PacketFilter block = loop.block(a, b);
+
+        final PacketFilter d1 = loop.delay(b, c, 500);
+        final PacketFilter d2 = loop.delay(c, b, 700);
+
+        loop.bind(a, new GossipService(seeds, alive,
+                random));
+        loop.bind(b, new GossipService(seeds, alive,
+                random));
+        loop.bind(c, new GossipService(seeds, alive,
+                random));
 
         loop.at(4000, new Task() {
             @Override
             public void run() throws Exception {
-                loop.cancel(block);
+                loop.cancel(block, d1, d2);
             }
         });
 

@@ -17,18 +17,21 @@ import eu.toolchain.swim.async.DatagramBindChannel;
 import eu.toolchain.swim.async.DatagramBindListener;
 import eu.toolchain.swim.async.EventLoop;
 import eu.toolchain.swim.async.ReceivePacket;
-import eu.toolchain.swim.async.Scheduler;
 import eu.toolchain.swim.async.Task;
 
 @Slf4j
 public class NioEventLoop implements EventLoop {
     private final HashMap<DatagramChannel, List<ReceivePacket>> receivers = new HashMap<>();
-    private final Scheduler scheduler = new Scheduler(10);
+    private final NioScheduler scheduler;
 
     private final ByteBuffer input = ByteBuffer.allocate(0xFFFF);
 
+    public NioEventLoop() {
+        this.scheduler = new NioScheduler(100, this);
+    }
+
     @Override
-    public void bindUDP(final InetSocketAddress address, final DatagramBindListener listener)
+    public void bind(final InetSocketAddress address, final DatagramBindListener listener)
             throws BindException {
         final DatagramChannel channel;
 
@@ -66,9 +69,9 @@ public class NioEventLoop implements EventLoop {
     }
 
     @Override
-    public void bindUDP(final String host, final int port, final DatagramBindListener listener)
+    public void bind(final String host, final int port, final DatagramBindListener listener)
             throws BindException {
-        bindUDP(new InetSocketAddress(host, port), listener);
+        bind(new InetSocketAddress(host, port), listener);
     }
 
     @Override
@@ -114,15 +117,15 @@ public class NioEventLoop implements EventLoop {
         while (true) {
             final long now = System.currentTimeMillis();
 
-            final Scheduler.Session session = scheduler.next(now);
+            final Long next = scheduler.next(now);
 
             final long sleep;
 
-            if (session != null) {
-                sleep = Math.max(0, session.getWhen() - now);
+            if (next != null) {
+                sleep = Math.max(0, next);
 
                 if (sleep == 0) {
-                    session.execute();
+                    scheduler.pop(now);
                     continue;
                 }
             } else {
@@ -133,7 +136,7 @@ public class NioEventLoop implements EventLoop {
 
             // timed out.
             if (keys == 0) {
-                session.execute();
+                scheduler.pop(now + sleep);
                 continue;
             }
 

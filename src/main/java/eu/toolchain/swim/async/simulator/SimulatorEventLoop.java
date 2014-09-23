@@ -27,7 +27,7 @@ public class SimulatorEventLoop implements EventLoop {
     private long tick = 0;
 
     @Override
-    public void bindUDP(final InetSocketAddress address, final DatagramBindListener listener)
+    public void bind(final InetSocketAddress address, final DatagramBindListener listener)
             throws BindException {
         listener.ready(this, new DatagramBindChannel() {
             @Override
@@ -100,9 +100,9 @@ public class SimulatorEventLoop implements EventLoop {
     }
 
     @Override
-    public void bindUDP(final String host, final int port, final DatagramBindListener listener)
+    public void bind(final String host, final int port, final DatagramBindListener listener)
             throws BindException {
-        bindUDP(new InetSocketAddress(host, port), listener);
+        bind(new InetSocketAddress(host, port), listener);
     }
 
     @Override
@@ -116,15 +116,15 @@ public class SimulatorEventLoop implements EventLoop {
     }
 
     public void run(final long duration) throws IOException {
-        for (tick = 0; tick <= duration; tick++) {
-            while (true) {
-                final PendingTask task = tasks.peek();
+        while (true) {
+            final PendingTask task = tasks.poll();
 
-                if (task == null || task.getTick() > tick)
-                    break;
+            if (task == null || task.getTick() >= duration)
+                break;
 
-                runTask(tasks.poll().getTask());
-            }
+            tick = task.getTick();
+
+            runTask(task.getTask());
         }
     }
 
@@ -140,8 +140,10 @@ public class SimulatorEventLoop implements EventLoop {
         }
     }
 
-    public void cancel(final PacketFilter filter) {
-        filters.remove(filter);
+    public void cancel(final PacketFilter... filters) {
+        for (PacketFilter filter : filters) {
+            this.filters.remove(filter);
+        }
     }
 
     public PacketFilter delay(final InetSocketAddress a, final InetSocketAddress b, final long ticks) {

@@ -38,7 +38,7 @@ public class GossipServiceListener {
     private static final byte ACK = 1;
     private static final byte PINGREQ = 2;
 
-    private final EventLoop eventLoop;
+    private final EventLoop loop;
     private final DatagramBindChannel channel;
     private final List<InetSocketAddress> seeds;
     private final Provider<Boolean> alive;
@@ -65,24 +65,30 @@ public class GossipServiceListener {
 
     public void start() {
         for (InetSocketAddress seed : seeds)
-            nodes.put(seed, new NodeData(eventLoop, seed));
+            nodes.put(seed, new NodeData(loop, seed));
 
         pingRandom();
 
-        eventLoop.schedule(2000, new Task() {
+        loop.schedule(2000, new Task() {
             @Override
             public void run() throws Exception {
-                expireOperations(eventLoop.now());
+                expireOperations(loop.now());
                 pingRandom();
-                eventLoop.schedule(2000, this);
+                loop.schedule(2000, this);
             }
         });
     }
 
+    void read(InetSocketAddress source, ByteBuffer input) throws Exception {
+        final byte type = input.get();
+
+        final Collection<Gossip> payloads = receive(source, input, type);
+
+        handleGossip(payloads);
+    }
+
     private void pingRandom() {
         final Collection<NodeData> peers = randomPeers(10, NodeFilters.any());
-
-        log.info("{}: {}: peers = {}", eventLoop.now(), channel.getBindAddress(), peers);
 
         for (NodeData node : peers) {
             try {
@@ -107,6 +113,8 @@ public class GossipServiceListener {
         for (final UUID id : expired) {
             final PendingOperation expire = pending.remove(id);
 
+            log.debug("{}: EXPIRE: {}", loop.now(), expire);
+
             if (expire instanceof PendingPing) {
                 final PendingPing p = (PendingPing) expire;
 
@@ -117,18 +125,9 @@ public class GossipServiceListener {
                     continue;
                 }
 
-                log.info("{}: {}: expired ping: {}", this.channel.getBindAddress(), now, p);
                 this.nodes.put(p.getTarget(), data.state(NodeState.SUSPECT));
             }
         }
-    }
-
-    void read(InetSocketAddress source, ByteBuffer input) throws Exception {
-        final byte type = input.get();
-
-        final Collection<Gossip> payloads = receive(source, input, type);
-
-        handleGossip(payloads);
     }
 
     private Collection<Gossip> receive(InetSocketAddress source,
@@ -199,7 +198,8 @@ public class GossipServiceListener {
 
     private void handlePingReq(InetSocketAddress source, PingReq pingReq)
             throws Exception {
-        log.debug("PING+REQ: {}", pingReq);
+        log.debug("{}: PING+REQ: {}", loop.now(), pingReq);
+
         final UUID id = pingReq.getId();
         final InetSocketAddress target = pingReq.getTarget();
         sendPingFromRequest(target, source, id);
@@ -209,7 +209,8 @@ public class GossipServiceListener {
      * Handle a received acknowledgement.
      */
     private void handleAck(SocketAddress source, Ack ack) throws Exception {
-        log.debug("ACK: {}", ack);
+        log.debug("{}: ACK: {}", loop.now(), ack);
+
         final Object any = pending.remove(ack.getId());
 
         if (any == null) {
@@ -246,7 +247,8 @@ public class GossipServiceListener {
 
     private void handlePing(final InetSocketAddress source, final Ping ping)
             throws Exception {
-        log.debug("PING: {}", ping);
+        log.debug("{}: PING: {}", loop.now(), ping);
+
         sendAck(source, ping.getId(), alive.get());
     }
 
@@ -263,7 +265,7 @@ public class GossipServiceListener {
         final UUID id = UUID.randomUUID();
         send(PINGREQ, peer, new PingReq(id, target, buildPayloads()),
                 PingReqSerializer.get());
-        pending.put(id, new PendingPing(eventLoop.now(), target,
+        pending.put(id, new PendingPing(loop.now(), target,
                 true));
     }
 
@@ -271,14 +273,14 @@ public class GossipServiceListener {
             final InetSocketAddress source, final UUID pingId) throws Exception {
         final UUID id = UUID.randomUUID();
         send(PING, target, new Ping(id, buildPayloads()), PingSerializer.get());
-        pending.put(id, new PendingPingReq(eventLoop.now(), target,
+        pending.put(id, new PendingPingReq(loop.now(), target,
                 pingId, source));
     }
 
     private void sendPing(final InetSocketAddress target) throws Exception {
         final UUID id = UUID.randomUUID();
         send(PING, target, new Ping(id, buildPayloads()), PingSerializer.get());
-        pending.put(id, new PendingPing(eventLoop.now(), target,
+        pending.put(id, new PendingPing(loop.now(), target,
                 false));
     }
 

@@ -9,8 +9,6 @@ import eu.toolchain.swim.async.nio.NioEventLoop;
 
 public class App {
     public static void main(final String[] args) throws Exception {
-        final List<InetSocketAddress> seeds = new ArrayList<>();
-        seeds.add(new InetSocketAddress("localhost", 3334));
 
         /*
          * if this provider provides the value 'false', this node will be
@@ -18,13 +16,16 @@ public class App {
          */
         final Provider<Boolean> alive = Providers.ofValue(true);
 
+        final List<InetSocketAddress> seeds = new ArrayList<>();
+        seeds.add(new InetSocketAddress("localhost", 3334));
+
         final NioEventLoop eventLoop = new NioEventLoop();
 
         final Random random = new Random(0);
 
-        eventLoop.bindUDP("localhost", 3333, new GossipService(seeds, alive,
+        eventLoop.bind(new InetSocketAddress("localhost", 3334), new GossipService(seeds, alive,
                 random));
-        eventLoop.bindUDP("localhost", 3334, new GossipService(seeds, alive,
+        eventLoop.bind(new InetSocketAddress("localhost", 3333), new GossipService(seeds, alive,
                 random));
 
         eventLoop.run();
