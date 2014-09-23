@@ -5,12 +5,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
-import org.mockito.Mockito;
-
 import eu.toolchain.swim.async.EventLoop;
+import eu.toolchain.swim.async.nio.NioEventLoop;
 
 public class App {
-    public static void main(String[] args) throws Exception {
+    public static void main(final String[] args) throws Exception {
         final List<Node> seeds = new ArrayList<>();
         seeds.add(new Node(new InetSocketAddress("localhost", 3334)));
 
@@ -20,7 +19,7 @@ public class App {
          */
         final Provider<Boolean> alive = Providers.ofValue(true);
 
-        final EventLoop eventLoop = Mockito.mock(EventLoop.class);
+        final EventLoop eventLoop = new NioEventLoop();
 
         final Random random = new Random(0);
 

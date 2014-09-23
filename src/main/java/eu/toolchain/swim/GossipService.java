@@ -21,11 +21,12 @@ public class GossipService implements DatagramBindListener {
     private final Random random;
 
     @Override
-    public void ready(EventLoop eventLoop, DatagramBindChannel channel) {
+    public void ready(final EventLoop eventLoop, final DatagramBindChannel channel) {
         final Task expire = new Task() {
             @Override
             public void run() {
                 log.info("EXPIRE!");
+                eventLoop.schedule(2000, this);
             }
         };
 
@@ -44,7 +45,7 @@ public class GossipService implements DatagramBindListener {
 
         channel.register(new ReceivePacket() {
             @Override
-            public void packet(InetSocketAddress source, ByteBuffer packet)
+            public void packet(final InetSocketAddress source, final ByteBuffer packet)
                     throws Exception {
                 session.read(source, packet);
             }

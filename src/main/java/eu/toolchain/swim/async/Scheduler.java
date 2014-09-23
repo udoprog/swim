@@ -1,4 +1,4 @@
-package eu.toolchain.swim;
+package eu.toolchain.swim.async;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -12,8 +12,8 @@ import lombok.RequiredArgsConstructor;
 public class Scheduler {
     private final long threshold;
 
-    private ArrayList<ScheduledOperation> tasks = new ArrayList<>();
-    private LinkedList<ScheduledOperation> newTasks = new LinkedList<>();
+    private final ArrayList<ScheduledOperation> tasks = new ArrayList<>();
+    private final LinkedList<ScheduledOperation> newTasks = new LinkedList<>();
 
     @Data
     public static class Session {
@@ -29,13 +29,13 @@ public class Scheduler {
                 if (Math.abs(next.getWhen() - this.when) > threshold)
                     break;
 
-                next.run(this);
+                next.run();
                 iterator.remove();
             }
         }
     }
 
-    public void schedule(long when, Task runnable) {
+    public void schedule(final long when, final Task runnable) {
         final long now = System.currentTimeMillis();
         newTasks.add(new ScheduledOperation(now + when, runnable));
     }
