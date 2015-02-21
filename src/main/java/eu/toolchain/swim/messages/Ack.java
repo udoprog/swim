@@ -10,11 +10,9 @@ import eu.toolchain.swim.NodeState;
 public class Ack {
     private final UUID id;
     private final boolean alive;
-    private final Collection<Gossip> payloads;
+    private final Collection<Gossip> gossip;
 
-    /*
-     * An ACK can explicitly say that a peer is 'dead'.
-     */
+    /* An ACK can explicitly say that a peer is 'dead'. */
     public NodeState toNodeState() {
         return alive ? NodeState.ALIVE : NodeState.DEAD;
     }

@@ -6,13 +6,13 @@ import java.nio.ByteBuffer;
 import eu.toolchain.swim.NodeState;
 import eu.toolchain.swim.messages.Gossip;
 
-public final class PayloadSerializer implements Serializer<Gossip> {
+public final class GossipSerializer implements Serializer<Gossip> {
     private static final Serializer<NodeState> peerStateSerializer = new EnumSerializer<NodeState>(NodeState.class);
 
-    private PayloadSerializer() {
+    private GossipSerializer() {
     }
 
-    private static final Serializer<Gossip> instance = new PayloadSerializer();
+    private static final Serializer<Gossip> instance = new GossipSerializer();
 
     public static Serializer<Gossip> get() {
         return instance;

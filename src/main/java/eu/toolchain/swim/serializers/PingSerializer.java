@@ -20,13 +20,13 @@ public final class PingSerializer implements Serializer<Ping> {
     @Override
     public void serialize(ByteBuffer b, Ping data) throws Exception {
         UUIDSerializer.get().serialize(b, data.getId());
-        SerializerUtils.serializeCollection(b, data.getPayloads(), PayloadSerializer.get());
+        SerializerUtils.serializeCollection(b, data.getGossip(), GossipSerializer.get());
     }
 
     @Override
     public Ping deserialize(ByteBuffer b) throws Exception {
         final UUID id = UUIDSerializer.get().deserialize(b);
-        final Collection<Gossip> payloads = SerializerUtils.deserializeCollection(b, PayloadSerializer.get());
+        final Collection<Gossip> payloads = SerializerUtils.deserializeCollection(b, GossipSerializer.get());
         return new Ping(id, payloads);
     }
 }

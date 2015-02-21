@@ -22,14 +22,14 @@ public final class PingReqSerializer implements Serializer<PingReq> {
     public void serialize(ByteBuffer b, PingReq data) throws Exception {
         UUIDSerializer.get().serialize(b, data.getId());
         InetSocketAddressSerializer.get().serialize(b, data.getTarget());
-        SerializerUtils.serializeCollection(b, data.getPayloads(), PayloadSerializer.get());
+        SerializerUtils.serializeCollection(b, data.getGossip(), GossipSerializer.get());
     }
 
     @Override
     public PingReq deserialize(ByteBuffer b) throws Exception {
         final UUID id = UUIDSerializer.get().deserialize(b);
         final InetSocketAddress target = InetSocketAddressSerializer.get().deserialize(b);
-        final Collection<Gossip> payloads = SerializerUtils.deserializeCollection(b, PayloadSerializer.get());
+        final Collection<Gossip> payloads = SerializerUtils.deserializeCollection(b, GossipSerializer.get());
         return new PingReq(id, target, payloads);
     }
 }

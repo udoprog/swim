@@ -58,9 +58,6 @@ public class GossipServiceListener {
     private final long pendingThreshold = 2000;
     private final long payloadLimit = 20;
 
-    // how many times we need to have gossiped about a node before we remove it.
-    private long inc = 0;
-
     private final ByteBuffer output = ByteBuffer.allocate(0xffff);
 
     public void start() {
@@ -125,34 +122,31 @@ public class GossipServiceListener {
                     continue;
                 }
 
-                this.nodes.put(p.getTarget(), data.state(NodeState.SUSPECT));
+                data.setState(NodeState.SUSPECT);
             }
         }
     }
 
-    private Collection<Gossip> receive(InetSocketAddress source,
-            final ByteBuffer input, byte type) throws Exception {
+    private Collection<Gossip> receive(InetSocketAddress source, final ByteBuffer input, byte type) throws Exception {
         switch (type) {
         case PING:
             final Ping ping = PingSerializer.get().deserialize(input);
             handlePing(source, ping);
-            return ping.getPayloads();
+            return ping.getGossip();
         case ACK:
             final Ack ack = AckSerializer.get().deserialize(input);
             handleAck(source, ack);
-            return ack.getPayloads();
+            return ack.getGossip();
         case PINGREQ:
             final PingReq pingReq = PingReqSerializer.get().deserialize(input);
             handlePingReq(source, pingReq);
-            return pingReq.getPayloads();
+            return pingReq.getGossip();
         default:
-            throw new RuntimeException("Unsupported message type: "
-                    + Integer.toHexString(0xff & type));
+            throw new RuntimeException("Unsupported message type: " + Integer.toHexString(0xff & type));
         }
     }
 
     /* handlers */
-
     private void handleGossip(Collection<Gossip> payloads) throws Exception {
         for (final Gossip g : payloads) {
             if (g.getAbout().equals(channel.getBindAddress())) {
@@ -165,44 +159,47 @@ public class GossipServiceListener {
             if (l == null)
                 continue;
 
-            final NodeData update = checkState(l, g.getState(), g.getInc());
-
-            if (update != null)
-                nodes.put(g.getAbout(), update);
+            updateState(l, g.getState(), g.getInc());
         }
     }
 
-    private NodeData checkState(final NodeData data, final NodeState state,
-            final long inc) {
+    private void updateState(final NodeData data, final NodeState state, final long inc) {
         switch (state) {
         case ALIVE:
-            if (data.getState() == NodeState.SUSPECT && inc > data.getInc())
-                return data.state(NodeState.ALIVE).inc(inc);
+            if (data.getState() == NodeState.SUSPECT && inc > data.getInc()) {
+                data.setState(NodeState.ALIVE);
+                data.setInc(inc);
+            }
 
-            if (data.getState() == NodeState.ALIVE && inc > data.getInc())
-                return data.state(NodeState.ALIVE).inc(inc);
+            if (data.getState() == NodeState.ALIVE && inc > data.getInc()) {
+                data.setState(NodeState.ALIVE);
+                data.setInc(inc);
+            }
 
-            return null;
+            break;
         case SUSPECT:
-            if (data.getState() == NodeState.SUSPECT && inc > data.getInc())
-                return data.state(NodeState.SUSPECT).inc(inc);
+            if (data.getState() == NodeState.SUSPECT && inc > data.getInc()) {
+                data.setState(NodeState.SUSPECT);
+                data.setInc(inc);
+            }
 
-            if (data.getState() == NodeState.ALIVE && inc >= data.getInc())
-                return data.state(NodeState.SUSPECT).inc(inc);
+            if (data.getState() == NodeState.ALIVE && inc >= data.getInc()) {
+                data.setState(NodeState.SUSPECT);
+                data.setInc(inc);
+            }
 
-            return null;
+            break;
         default:
-            return null;
+            break;
         }
     }
 
-    private void handlePingReq(InetSocketAddress source, PingReq pingReq)
-            throws Exception {
+    private void handlePingReq(InetSocketAddress source, PingReq pingReq) throws Exception {
         log.debug("{}: PING+REQ: {}", loop.now(), pingReq);
 
-        final UUID id = pingReq.getId();
-        final InetSocketAddress target = pingReq.getTarget();
-        sendPingFromRequest(target, source, id);
+        final UUID id = UUID.randomUUID();
+        send(PING, pingReq.getTarget(), new Ping(id, buildPayloads()), PingSerializer.get());
+        pending.put(id, new PendingPingReq(loop.now(), pingReq.getTarget(), pingReq.getId(), source));
     }
 
     /**
@@ -218,9 +215,7 @@ public class GossipServiceListener {
             return;
         }
 
-        /*
-         * Requests which have been performed from this node.
-         */
+        /* Requests which have been performed from this node. */
         if (any instanceof PendingPing) {
             final PendingPing p = (PendingPing) any;
             final NodeData data = nodes.get(p.getTarget());
@@ -230,13 +225,11 @@ public class GossipServiceListener {
                 return;
             }
 
-            nodes.put(p.getTarget(), data.state(ack.toNodeState()));
+            data.setState(ack.toNodeState());
             return;
         }
 
-        /*
-         * Requests which have been performed on behalf of another node.
-         */
+        /* Requests which have been performed on behalf of another node. */
         if (any instanceof PendingPingReq) {
             final PendingPingReq p = (PendingPingReq) any;
             // send back acknowledgement to the source peer.
@@ -245,8 +238,7 @@ public class GossipServiceListener {
         }
     }
 
-    private void handlePing(final InetSocketAddress source, final Ping ping)
-            throws Exception {
+    private void handlePing(final InetSocketAddress source, final Ping ping) throws Exception {
         log.debug("{}: PING: {}", loop.now(), ping);
 
         sendAck(source, ping.getId(), alive.get());
@@ -254,34 +246,20 @@ public class GossipServiceListener {
 
     /* senders */
 
-    private void sendAck(final InetSocketAddress target, final UUID id,
-            boolean alive) throws Exception {
-        send(ACK, target, new Ack(id, alive, buildPayloads()),
-                AckSerializer.get());
+    private void sendAck(final InetSocketAddress target, final UUID id, boolean alive) throws Exception {
+        send(ACK, target, new Ack(id, alive, buildPayloads()), AckSerializer.get());
     }
 
-    private void sendPingRequest(final InetSocketAddress target,
-            final InetSocketAddress peer) throws Exception {
+    private void sendPingRequest(final InetSocketAddress target, final InetSocketAddress peer) throws Exception {
         final UUID id = UUID.randomUUID();
-        send(PINGREQ, peer, new PingReq(id, target, buildPayloads()),
-                PingReqSerializer.get());
-        pending.put(id, new PendingPing(loop.now(), target,
-                true));
-    }
-
-    private void sendPingFromRequest(final InetSocketAddress target,
-            final InetSocketAddress source, final UUID pingId) throws Exception {
-        final UUID id = UUID.randomUUID();
-        send(PING, target, new Ping(id, buildPayloads()), PingSerializer.get());
-        pending.put(id, new PendingPingReq(loop.now(), target,
-                pingId, source));
+        send(PINGREQ, peer, new PingReq(id, target, buildPayloads()), PingReqSerializer.get());
+        pending.put(id, new PendingPing(loop.now(), target, true));
     }
 
     private void sendPing(final InetSocketAddress target) throws Exception {
         final UUID id = UUID.randomUUID();
         send(PING, target, new Ping(id, buildPayloads()), PingSerializer.get());
-        pending.put(id, new PendingPing(loop.now(), target,
-                false));
+        pending.put(id, new PendingPing(loop.now(), target, false));
     }
 
     private Collection<Gossip> buildPayloads() throws Exception {
@@ -322,8 +300,7 @@ public class GossipServiceListener {
         return result;
     }
 
-    private <T> void send(byte type, InetSocketAddress target, T data,
-            Serializer<T> serializer) throws Exception {
+    private <T> void send(byte type, InetSocketAddress target, T data, Serializer<T> serializer) throws Exception {
         output.clear();
         output.put(type);
         serializer.serialize(output, data);

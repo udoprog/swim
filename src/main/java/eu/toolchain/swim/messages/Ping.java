@@ -8,5 +8,5 @@ import lombok.Data;
 @Data
 public class Ping {
     private final UUID id;
-    private final Collection<Gossip> payloads;
+    private final Collection<Gossip> gossip;
 }
