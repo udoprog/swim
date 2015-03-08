@@ -32,7 +32,7 @@
     <dependency>
       <groupId>eu.toolchain.serializer</groupId>
       <artifactId>tiny-serializer-core</artifactId>
-      <version>1.0.1-SNAPSHOT</version>
+      <version>1.0.1</version>
     </dependency>
 
     <dependency>

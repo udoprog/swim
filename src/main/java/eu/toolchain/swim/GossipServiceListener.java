@@ -21,7 +21,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Queue;
 import java.util.Random;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -51,6 +50,9 @@ public class GossipServiceListener {
 
     private static final long DEFAULT_EXPIRE_TIMER = 1000;
     private static final long PEER_TIMEOUT = 30000;
+    private static final long DEFAULT_PING_TIMEOUT = 2000;
+    private static final long DEFAULT_PING_REQ_TIMEOUT = 1000;
+    private static final long DEFAULT_GOSSIP_LIMIT = 20;
 
     private final EventLoop loop;
     private final DatagramBindChannel channel;
@@ -64,21 +66,19 @@ public class GossipServiceListener {
     private final Map<InetSocketAddress, Peer> peers = new ConcurrentHashMap<>();
     private final AtomicReference<Peer> local = new AtomicReference<>();
 
-    private final Set<Gossip> gossip = new HashSet<>();
-
     private final long expireTimer = DEFAULT_EXPIRE_TIMER;
     private final long peerTimeout = PEER_TIMEOUT;
+    private final long pingTimeout = DEFAULT_PING_TIMEOUT;
+    private final long pingReqTimeout = DEFAULT_PING_REQ_TIMEOUT;
+    private final long gossipLimit = DEFAULT_GOSSIP_LIMIT;
 
     /**
      * Maintained lists of random pools to make sure entries are fetched uniformly randomly.
      */
-    private final Map<NodeFilter, Queue<Peer>> randomPools = new HashMap<>();
+    private final Map<NodeFilter, Queue<InetSocketAddress>> randomPools = new HashMap<>();
 
     /* pending pings */
     private Map<UUID, PendingOperation> pending = new HashMap<>();
-
-    private final long pendingThreshold = 2000;
-    private final long payloadLimit = 20;
 
     private final ByteBuffer output = ByteBuffer.allocate(0xffff);
 
@@ -125,13 +125,13 @@ public class GossipServiceListener {
     }
 
     private void expireOperations(final long now) throws Exception {
-        final Set<UUID> expired = new HashSet<>();
+        final ArrayList<UUID> expired = new ArrayList<>();
 
         for (final Map.Entry<UUID, PendingOperation> entry : pending.entrySet()) {
             final UUID id = entry.getKey();
             final PendingOperation op = entry.getValue();
 
-            if ((op.getStarted() + pendingThreshold) <= now)
+            if (op.getExpires() <= now)
                 expired.add(id);
         }
 
@@ -152,11 +152,12 @@ public class GossipServiceListener {
         }
 
         for (final Peer p : new ArrayList<>(peers.values())) {
-            if (p.getUpdated() + peerTimeout < now)
-                continue;
-
             // don't remove seed nodes
             if (p.isSeed())
+                continue;
+
+            // is timeout in the future?
+            if (p.getUpdated() + peerTimeout > now)
                 continue;
 
             log.warn("{}:{}: Removing peer {}, haven't seen them for {} seconds", channel.getBindAddress(), now, p,
@@ -231,33 +232,48 @@ public class GossipServiceListener {
     }
 
     private void handleOtherStateGossip(OtherStateGossip g) {
-        final Peer about = handleMyStateGossip(g);
-        about.rumor(g.getSource(), loop.now(), g.getInc(), g.getState());
-    }
+        final long now = loop.now();
 
-    private Peer handleMyStateGossip(Gossip g) {
         Peer about = peers.get(g.getAbout());
 
-        if (about == null) {
-            about = new Peer(g.getAbout(), g.getState(), g.getInc(), loop.now());
-            peers.put(about.getAddress(), about);
-            about = peers.get(about.getAddress());
-        }
+        if (about == null)
+            about = new Peer(g.getAbout(), g.getState(), g.getInc(), now);
 
         // something fresher than we know.
         // since this is an incremental update, we know that it has to originate
         // from the node in question, or someone who has a more recent (direct) picture with that node.
-        if (about.getInc() < g.getInc())
-            peers.put(about.getAddress(), about.update(g.getState(), g.getInc(), loop.now()));
+        if (about.getInc() < g.getInc()) {
+            about = about.update(g.getState(), g.getInc(), now);
+        } else {
+            about = about.poke(now);
+        }
 
-        return about;
+        about.rumor(g.getSource(), now, g.getInc(), g.getState());
+        peers.put(about.getAddress(), about);
+    }
+
+    private void handleMyStateGossip(Gossip g) {
+        final long now = loop.now();
+
+        Peer about = peers.get(g.getAbout());
+
+        if (about == null)
+            about = new Peer(g.getAbout(), g.getState(), g.getInc(), now);
+
+        about = about.update(g.getState(), g.getInc(), now);
+
+        // something fresher than we know.
+        // since this is an incremental update, we know that it has to originate
+        // from the node in question, or someone who has a more recent (direct) picture with that node.
+        peers.put(about.getAddress(), about);
     }
 
     private void handlePingReq(InetSocketAddress source, PingReq pingReq) throws Exception {
         log.debug("{}: PING+REQ: {}", loop.now(), pingReq);
-        final UUID id = UUID.randomUUID();
+        final UUID id = loop.uuid();
         send(pingReq.getTarget(), new Ping(id, buildGossip()));
-        pending.put(id, new PendingPingReq(loop.now(), pingReq.getTarget(), pingReq.getId(), source));
+        final long now = loop.now();
+        pending.put(id, new PendingPingReq(now, now + pingReqTimeout, pingReq.getTarget(), pingReq.getId(), source));
     }
 
     /**
@@ -266,7 +282,7 @@ public class GossipServiceListener {
     private void handleAck(SocketAddress source, Ack ack) throws Exception {
         log.debug("{}: ACK: {}", loop.now(), ack);
 
-        final Object any = pending.remove(ack.getId());
+        final PendingOperation any = pending.remove(ack.getId());
 
         if (any == null) {
             log.warn("Received ACK for non-pending message: {}", ack);
@@ -303,7 +319,7 @@ public class GossipServiceListener {
 
     private void handlePing(final InetSocketAddress source, final Ping ping) throws Exception {
         log.debug("{}: PING: {}", loop.now(), ping);
-        ack(source, ping.getId(), true);
+        ack(source, ping.getId(), alive.get());
     }
 
     /* senders */
@@ -313,14 +329,16 @@ public class GossipServiceListener {
     }
 
     private void pingRequest(final InetSocketAddress peer, final InetSocketAddress target) throws Exception {
-        final UUID id = UUID.randomUUID();
-        pending.put(id, new PendingPing(loop.now(), target, true));
+        final UUID id = loop.uuid();
+        final long now = loop.now();
+        pending.put(id, new PendingPing(now, now + pingTimeout, target, true));
         send(peer, new PingReq(id, target, buildGossip()));
     }
 
     private void ping(final InetSocketAddress target) throws Exception {
-        final UUID id = UUID.randomUUID();
-        pending.put(id, new PendingPing(loop.now(), target, false));
+        final UUID id = loop.uuid();
+        final long now = loop.now();
+        pending.put(id, new PendingPing(now, now + pingTimeout, target, false));
         send(target, new Ping(id, buildGossip()));
     }
 
@@ -338,9 +356,9 @@ public class GossipServiceListener {
 
         final InetSocketAddress address = channel.getBindAddress();
 
-        final NodeFilter filter = and(ALIVE_OR_SUSPECT, younger(loop.now(), 30000));
+        final NodeFilter filter = and(ALIVE_OR_SUSPECT, younger(30000));
 
-        for (final Peer v : randomPeers(10, filter))
+        for (final Peer v : randomPeers(gossipLimit, filter))
             result.add(new OtherStateGossip(address, v.getAddress(), v.getState(), v.getInc()));
 
         return result;
@@ -381,15 +399,26 @@ public class GossipServiceListener {
     private Collection<Peer> randomPeers(long k, NodeFilter filter) {
         final ArrayList<Peer> result = new ArrayList<>();
 
-        Queue<Peer> nodes = randomPools.get(filter);
+        Queue<InetSocketAddress> nodes = randomPools.get(filter);
 
         while (result.size() < k) {
             if (nodes != null) {
-                while (!nodes.isEmpty())
-                    result.add(nodes.poll());
+                while (!nodes.isEmpty()) {
+                    final InetSocketAddress addr = nodes.poll();
+
+                    final Peer p = peers.get(addr);
+
+                    if (p == null)
+                        continue;
+
+                    if (!filter.matches(loop, p))
+                        continue;
+
+                    result.add(p);
+                }
             }
 
-            final List<Peer> source = peers(filter);
+            final List<InetSocketAddress> source = peers(filter);
 
             if (source.isEmpty())
                 return result;
@@ -404,12 +433,12 @@ public class GossipServiceListener {
         return new HashSet<>(result);
     }
 
-    private List<Peer> peers(NodeFilter filter) {
-        final List<Peer> result = new ArrayList<>();
+    private List<InetSocketAddress> peers(NodeFilter filter) {
+        final List<InetSocketAddress> result = new ArrayList<>();
 
         for (final Peer p : this.peers.values()) {
-            if (filter.matches(p))
-                result.add(p);
+            if (filter.matches(loop, p))
+                result.add(p.getAddress());
         }
 
         return result;

@@ -33,7 +33,7 @@ public class TestSimulator {
         final SimulatorEventLoop loop = new SimulatorEventLoop(random);
 
         // 5% global packet loss
-        // loop.setPacketLoss(20);
+        loop.setPacketLoss(20);
 
         // set a random delay between 10 and 200 ticks.
         loop.setRandomDelay(10, 200);

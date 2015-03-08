@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 
 import lombok.extern.slf4j.Slf4j;
 import eu.toolchain.swim.async.BindException;
@@ -31,8 +32,7 @@ public class NioEventLoop implements EventLoop {
     }
 
     @Override
-    public void bind(final InetSocketAddress address, final DatagramBindListener listener)
-            throws BindException {
+    public void bind(final InetSocketAddress address, final DatagramBindListener listener) throws BindException {
         final DatagramChannel channel;
 
         try {
@@ -69,8 +69,7 @@ public class NioEventLoop implements EventLoop {
     }
 
     @Override
-    public void bind(final String host, final int port, final DatagramBindListener listener)
-            throws BindException {
+    public void bind(final String host, final int port, final DatagramBindListener listener) throws BindException {
         bind(new InetSocketAddress(host, port), listener);
     }
 
@@ -82,6 +81,11 @@ public class NioEventLoop implements EventLoop {
     @Override
     public long now() {
         return System.currentTimeMillis();
+    }
+
+    @Override
+    public UUID uuid() {
+        return UUID.randomUUID();
     }
 
     public void run() throws IOException {

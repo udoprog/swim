@@ -28,7 +28,7 @@ public final class NodeFilters {
         return new NodeFilter.Any();
     }
 
-    public static NodeFilter younger(long now, long age) {
-        return new NodeFilter.Younger(now, age);
+    public static NodeFilter younger(long age) {
+        return new NodeFilter.Younger(age);
     }
 }

@@ -13,9 +13,6 @@ public class Peer {
     // if this amount of nodes think that this node is dead, we are no longer considering it.
     private static final int RUMOR_LIMIT = 3;
 
-    // what does this node think about other nodes?
-    private final Map<InetSocketAddress, Rumor> rumors = new ConcurrentHashMap<>();
-
     private final boolean seed;
 
     private final InetSocketAddress address;
@@ -31,24 +28,27 @@ public class Peer {
 
     private final long updated;
 
+    // what does this node think about other nodes?
+    private final Map<InetSocketAddress, Rumor> rumors;
+
     public Peer(InetSocketAddress address, long now) {
-        this(true, address, NodeState.UNKNOWN, 0, 0, now);
+        this(true, address, NodeState.UNKNOWN, 0, 0, now, new ConcurrentHashMap<InetSocketAddress, Rumor>());
     }
 
     public Peer(InetSocketAddress address, NodeState state, long inc, long updated) {
-        this(false, address, state, inc, 0, updated);
+        this(false, address, state, inc, 0, updated, new ConcurrentHashMap<InetSocketAddress, Rumor>());
     }
 
     public Peer update(NodeState state, long inc, long now) {
-        return new Peer(seed, address, state, inc, 0, now);
+        return new Peer(seed, address, state, inc, 0, now, rumors);
     }
 
     public Peer update(NodeState state, long now) {
-        return new Peer(seed, address, state, inc, 0, now);
+        return new Peer(seed, address, state, inc, 0, now, rumors);
     }
 
     public Peer poke(long now) {
-        return new Peer(seed, address, state, inc, 0, now);
+        return new Peer(seed, address, state, inc, 0, now, rumors);
     }
 
     public void rumor(InetSocketAddress source, long now, long inc, NodeState state) {

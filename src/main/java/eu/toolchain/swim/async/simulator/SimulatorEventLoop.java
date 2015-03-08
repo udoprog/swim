@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.PriorityQueue;
 import java.util.Random;
 import java.util.Set;
+import java.util.UUID;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,6 +35,8 @@ public class SimulatorEventLoop implements EventLoop {
 
     private long delayLow = 0;
     private long delayHigh = 0;
+
+    private long uuidId = 0;
 
     @Override
     public void bind(final InetSocketAddress address, final DatagramBindListener listener) throws BindException {
@@ -151,6 +154,11 @@ public class SimulatorEventLoop implements EventLoop {
     @Override
     public long now() {
         return tick;
+    }
+
+    @Override
+    public UUID uuid() {
+        return new UUID(0l, uuidId++);
     }
 
     public void run(final long duration) throws IOException {

@@ -30,8 +30,8 @@ public class GossipService implements DatagramBindListener {
     }
 
     @Override
-    public void ready(final EventLoop eventLoop, final DatagramBindChannel channel) {
-        final GossipServiceListener session = new GossipServiceListener(eventLoop, channel, seeds, alive, random);
+    public void ready(final EventLoop loop, final DatagramBindChannel channel) {
+        final GossipServiceListener session = new GossipServiceListener(loop, channel, seeds, alive, random);
 
         channel.register(new ReceivePacket() {
             @Override
