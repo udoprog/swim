@@ -10,11 +10,11 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class Peer {
     // if this amount of nodes think that this node is dead, we are no longer considering it.
-    private static final int RUMOR_LIMIT = 3;
+    private static final int RUMOR_LIMIT = 2;
 
     private final InetSocketAddress address;
 
-    // current node state.
+    // current state according to probing.
     private final NodeState state;
 
     // how fresh this data is, only the originating node may increment this value.
@@ -26,7 +26,7 @@ public class Peer {
     private final ArrayList<Rumor> rumors;
 
     public Peer(InetSocketAddress address, long now) {
-        this(address, NodeState.UNKNOWN, 0, now, new ArrayList<Rumor>());
+        this(address, NodeState.SUSPECT, 0, now, new ArrayList<Rumor>());
     }
 
     public Peer(InetSocketAddress address, NodeState state, long inc, long updated) {
@@ -72,23 +72,9 @@ public class Peer {
         return rumors;
     }
 
-    private ArrayList<Rumor> prune(long inc) {
-        final ArrayList<Rumor> rumors = new ArrayList<>(this.rumors.size());
-
-        for (final Rumor r : this.rumors) {
-            if (r.getInc() >= inc)
-                rumors.add(r);
-        }
-
-        return rumors;
-    }
-
     public boolean isAlive() {
         if (state == NodeState.DEAD)
             return false;
-
-        if (state == NodeState.ALIVE)
-            return true;
 
         return isRumoredAlive();
     }
@@ -96,16 +82,19 @@ public class Peer {
     private boolean isRumoredAlive() {
         // not enough rumors to base opinion on.
         if (rumors.size() < RUMOR_LIMIT)
-            return false;
+            return state == NodeState.ALIVE;
 
         int suspicions = 0;
+
+        if (state == NodeState.SUSPECT)
+            suspicions += 1;
 
         for (final Rumor rumor : rumors) {
             // ignore old rumors
             if (rumor.getInc() < this.inc)
                 continue;
 
-            if (rumor.getState() == NodeState.UNKNOWN || rumor.getState() == NodeState.DEAD)
+            if (rumor.getState() == NodeState.SUSPECT || rumor.getState() == NodeState.DEAD)
                 suspicions += 1;
 
             if (suspicions >= RUMOR_LIMIT)

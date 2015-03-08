@@ -40,6 +40,6 @@ public class TestSerializers {
         gossip.add(new OtherGossip(addr, addr, NodeState.ALIVE, 40));
 
         roundtrip(new Ping(UUID.randomUUID(), gossip), s.ping());
-        roundtrip(new Ack(UUID.randomUUID(), false, gossip), s.ack());
+        roundtrip(new Ack(UUID.randomUUID(), NodeState.SUSPECT, gossip), s.ack());
     }
 }

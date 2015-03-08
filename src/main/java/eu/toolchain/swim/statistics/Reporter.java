@@ -5,6 +5,7 @@ import java.util.UUID;
 
 import eu.toolchain.swim.PendingOperation;
 import eu.toolchain.swim.messages.Ack;
+import eu.toolchain.swim.messages.DirectGossip;
 import eu.toolchain.swim.messages.Ping;
 import eu.toolchain.swim.messages.PingRequest;
 
@@ -26,4 +27,6 @@ public interface Reporter {
     void reportSentAck(Ack ack);
 
     void reportSentPingRequest(PingRequest pingRequest);
+
+    void reportDirectGossipIncError(DirectGossip g);
 }

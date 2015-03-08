@@ -5,17 +5,19 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
 
+import lombok.extern.slf4j.Slf4j;
+import eu.toolchain.swim.GossipService.Channel;
 import eu.toolchain.swim.async.nio.NioEventLoop;
 import eu.toolchain.swim.statistics.TallyReporter;
 
+@Slf4j
 public class App {
     public static void main(final String[] args) throws Exception {
-
         /* if this provider provides the value 'false', this node will be considered dead. */
         final Provider<Boolean> alive = Providers.ofValue(true);
 
         final List<InetSocketAddress> seeds = new ArrayList<>();
-        seeds.add(new InetSocketAddress("localhost", 3334));
+        seeds.add(new InetSocketAddress(3000));
 
         final NioEventLoop loop = new NioEventLoop();
 
@@ -23,10 +25,23 @@ public class App {
 
         final TallyReporter reporter = new TallyReporter(loop);
 
-        loop.bind(new InetSocketAddress("localhost", 3334), new GossipService(loop, seeds, alive, random, reporter,
-                ChangeListener.NOOP));
-        loop.bind(new InetSocketAddress("localhost", 3333), new GossipService(loop, seeds, alive, random, reporter,
-                ChangeListener.NOOP));
+        final ChangeListener<GossipService.Channel> listener = new ChangeListener<GossipService.Channel>() {
+            @Override
+            public void peerLost(Channel channel, InetSocketAddress peer) {
+                log.info("lost: {}", peer);
+            }
+
+            @Override
+            public void peerFound(Channel channel, InetSocketAddress peer) {
+                log.info("found: {}", peer);
+            }
+        };
+
+        final int base = 5000;
+
+        loop.bind(new InetSocketAddress(base), new GossipService(loop, seeds, alive, random, reporter, listener));
+        loop.bind(new InetSocketAddress(base + 1), new GossipService(loop, seeds, alive, random, reporter, listener));
+        loop.bind(new InetSocketAddress(base + 2), new GossipService(loop, seeds, alive, random, reporter, listener));
 
         loop.run();
 

@@ -119,22 +119,22 @@ public class Serializers {
     public Serializer<Ack> ack() {
         return new Serializer<Ack>() {
             private final Serializer<UUID> id = serializer.uuid();
-            private final Serializer<Boolean> alive = serializer.bool();
+            private final Serializer<NodeState> state = serializer.forEnum(NodeState.values());
             private final Serializer<List<Gossip>> gossip = serializer.list(gossip());
 
             @Override
             public void serialize(SerialWriter buffer, Ack value) throws IOException {
                 id.serialize(buffer, value.getPingId());
-                alive.serialize(buffer, value.isAlive());
+                state.serialize(buffer, value.getState());
                 gossip.serialize(buffer, value.getGossip());
             }
 
             @Override
             public Ack deserialize(SerialReader buffer) throws IOException {
                 final UUID id = this.id.deserialize(buffer);
-                final boolean alive = this.alive.deserialize(buffer);
+                final NodeState state = this.state.deserialize(buffer);
                 final List<Gossip> gossip = this.gossip.deserialize(buffer);
-                return new Ack(id, alive, gossip);
+                return new Ack(id, state, gossip);
             }
         };
     }

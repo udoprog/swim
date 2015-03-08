@@ -1,7 +1,6 @@
 package eu.toolchain.swim;
 
 import static eu.toolchain.swim.NodeFilters.address;
-import static eu.toolchain.swim.NodeFilters.and;
 import static eu.toolchain.swim.NodeFilters.not;
 import static eu.toolchain.swim.NodeFilters.younger;
 
@@ -53,7 +52,8 @@ public class GossipService implements DatagramBindListener<Channel> {
     private static final long DEFAULT_SEED_TIMER = 10000;
     private static final long PEER_TIMEOUT = 30000;
     private static final long DEFAULT_PING_TIMEOUT = 2000;
-    private static final long DEFAULT_PING_REQ_TIMEOUT = 1000;
+    private static final long DEFAULT_PING_REQ_TIMEOUT = 1500;
+    private static final long DEFAULT_PING_REQ_DELEGATE_TIMEOUT = 1000;
     private static final long DEFAULT_GOSSIP_LIMIT = 20;
 
     private final EventLoop loop;
@@ -61,9 +61,7 @@ public class GossipService implements DatagramBindListener<Channel> {
     private final Provider<Boolean> alive;
     private final Random random;
     private final Reporter reporter;
-    private final ChangeListener listener;
-
-    private final AtomicReference<Set<InetSocketAddress>> alivePeers = new AtomicReference<>();
+    private final ChangeListener<Channel> listener;
 
     private final Serializers s = new Serializers();
     private final Serializer<Message> message = s.message();
@@ -73,13 +71,14 @@ public class GossipService implements DatagramBindListener<Channel> {
     private final long peerTimeout = PEER_TIMEOUT;
     private final long pingTimeout = DEFAULT_PING_TIMEOUT;
     private final long pingRequestTimeout = DEFAULT_PING_REQ_TIMEOUT;
+    private final long pingRequestDelegateTimeout = DEFAULT_PING_REQ_DELEGATE_TIMEOUT;
     private final long gossipLimit = DEFAULT_GOSSIP_LIMIT;
 
     public GossipService alive(Provider<Boolean> alive) {
         return new GossipService(loop, seeds, alive, random, reporter, listener);
     }
 
-    public GossipService listener(ChangeListener listener) {
+    public GossipService listener(ChangeListener<Channel> listener) {
         return new GossipService(loop, seeds, alive, random, reporter, listener);
     }
 
@@ -104,6 +103,7 @@ public class GossipService implements DatagramBindListener<Channel> {
 
         private final Map<InetSocketAddress, Peer> peers = new ConcurrentHashMap<>();
         private final AtomicReference<Peer> local = new AtomicReference<>();
+        private final AtomicReference<Set<InetSocketAddress>> alivePeers = new AtomicReference<>();
 
         /**
          * Maintained lists of random pools to make sure entries are fetched uniformly randomly.
@@ -129,7 +129,8 @@ public class GossipService implements DatagramBindListener<Channel> {
         }
 
         void read(InetSocketAddress source, ByteBuffer input) throws Exception {
-            handleGossip(receive(source, input));
+            final Collection<Gossip> gossip = receive(source, input);
+            handleGossip(source, gossip);
         }
 
         public List<InetSocketAddress> members() {
@@ -149,21 +150,7 @@ public class GossipService implements DatagramBindListener<Channel> {
             return members;
         }
 
-        public List<InetSocketAddress> allPeers() {
-            final List<InetSocketAddress> members = new ArrayList<>();
-
-            for (final Peer data : peers.values()) {
-                members.add(data.getAddress());
-            }
-
-            return members;
-        }
-
         private void start() {
-            // TODO: retry seed nodes once in a while.
-            for (InetSocketAddress seed : seeds)
-                peers.put(seed, new Peer(seed, loop.now()));
-
             // local node
             local.set(new Peer(channel.getBindAddress(), NodeState.ALIVE, 1, loop.now()));
 
@@ -177,10 +164,15 @@ public class GossipService implements DatagramBindListener<Channel> {
                     }
 
                     try {
-
                         expirePeers();
                     } catch (Exception e) {
                         log.error("Peer expire failed", e);
+                    }
+
+                    try {
+                        checkAlive();
+                    } catch (Exception e) {
+                        log.error("failed to perform alive check", e);
                     }
 
                     loop.schedule(expireTimer, this);
@@ -199,8 +191,6 @@ public class GossipService implements DatagramBindListener<Channel> {
                     loop.schedule(seedTimer, this);
                 }
             });
-
-            checkAlive();
         }
 
         /**
@@ -211,7 +201,7 @@ public class GossipService implements DatagramBindListener<Channel> {
          */
         private void pingSeeds() throws Exception {
             for (final InetSocketAddress seed : seeds) {
-                if (!peers.containsKey(seed))
+                if (!peers.containsKey(seed) && !channel.getBindAddress().equals(seed))
                     ping(seed);
             }
         }
@@ -262,15 +252,15 @@ public class GossipService implements DatagramBindListener<Channel> {
         }
 
         private void expirePendingPingReq(UUID id, PendingPingReq expired) throws Exception {
-            final Peer data = this.peers.get(expired.getTarget());
+            final Peer peer = this.peers.get(expired.getTarget());
 
-            if (data == null) {
+            if (peer == null) {
                 reporter.reportMissingPeerForExpire(id, expired);
                 return;
             }
 
-            peers.put(expired.getTarget(), data.state(NodeState.UNKNOWN).touch(loop.now()));
-            ack(expired.getSource(), expired.getSourcePingId(), false);
+            peers.put(expired.getTarget(), peer.state(NodeState.SUSPECT).touch(loop.now()));
+            ack(expired.getSource(), expired.getSourcePingId(), NodeState.SUSPECT);
         }
 
         private void expirePendingPing(UUID id, PendingPing expired) throws Exception {
@@ -318,20 +308,18 @@ public class GossipService implements DatagramBindListener<Channel> {
 
         /* handlers */
 
-        private void handleGossip(Collection<Gossip> payloads) throws Exception {
+        private void handleGossip(InetSocketAddress source, Collection<Gossip> payloads) throws Exception {
             for (final Gossip g : payloads) {
                 if (g instanceof OtherGossip) {
-                    hanldeOtherGossip((OtherGossip) g);
+                    handleOtherGossip(source, (OtherGossip) g);
                     continue;
                 }
 
                 if (g instanceof DirectGossip) {
-                    handleDirectGossip((DirectGossip) g);
+                    handleDirectGossip(source, (DirectGossip) g);
                     continue;
                 }
             }
-
-            checkAlive();
         }
 
         private void checkAlive() {
@@ -360,19 +348,22 @@ public class GossipService implements DatagramBindListener<Channel> {
                 alivePeers.set(members);
 
             for (final InetSocketAddress add : added)
-                listener.peerFound(add);
+                listener.peerFound(this, add);
 
             for (final InetSocketAddress remove : removed)
-                listener.peerLost(remove);
+                listener.peerLost(this, remove);
         }
 
-        private void hanldeOtherGossip(OtherGossip g) {
+        private void handleOtherGossip(InetSocketAddress source, OtherGossip g) {
+            if (g.getAbout().equals(channel.getBindAddress()))
+                return;
+
             final long now = loop.now();
 
             Peer about = peers.get(g.getAbout());
 
             if (about == null)
-                about = new Peer(g.getAbout(), NodeState.UNKNOWN, 0, now);
+                about = new Peer(g.getAbout(), NodeState.SUSPECT, 0, now);
 
             // TODO: there used to be a block here about handling gossip about setting the state of an already existing
             // peer, should we have it?
@@ -388,8 +379,13 @@ public class GossipService implements DatagramBindListener<Channel> {
 
         /**
          * Receive first-hand account directly from a node, this overrides everything.
+         *
+         * @param source
          */
-        private void handleDirectGossip(DirectGossip g) {
+        private void handleDirectGossip(InetSocketAddress source, DirectGossip g) {
+            if (g.getAbout().equals(channel.getBindAddress()))
+                throw new IllegalStateException("gossiping about self");
+
             final long now = loop.now();
 
             Peer about = peers.get(g.getAbout());
@@ -400,8 +396,10 @@ public class GossipService implements DatagramBindListener<Channel> {
                 about = about.touch(now);
             }
 
-            if (about.getInc() > g.getInc())
-                throw new IllegalStateException("only direct gossip may update inc");
+            if (about.getInc() > g.getInc()) {
+                reporter.reportDirectGossipIncError(g);
+                return;
+            }
 
             about = about.state(g.getState()).inc(g.getInc());
 
@@ -415,14 +413,13 @@ public class GossipService implements DatagramBindListener<Channel> {
             final UUID id = loop.uuid();
             final long now = loop.now();
 
-            pings.put(id,
-                    new PendingPingReq(now, now + pingRequestTimeout, pingRequest.getTarget(), pingRequest.getId(),
-                            source));
+            expireIn(pingRequestDelegateTimeout, id);
+
+            pings.put(id, new PendingPingReq(now, now + pingRequestDelegateTimeout, pingRequest.getTarget(),
+                    pingRequest.getId(), source));
 
             final Ping ping = new Ping(id, buildGossip());
-
             send(pingRequest.getTarget(), ping);
-
             reporter.reportSentPing(ping);
         }
 
@@ -449,12 +446,7 @@ public class GossipService implements DatagramBindListener<Channel> {
                     return;
                 }
 
-                if (ack.isAlive()) {
-                    peers.put(p.getTarget(), peer.state(NodeState.ALIVE).touch(loop.now()));
-                } else {
-                    peers.put(p.getTarget(), peer.state(NodeState.DEAD).touch(loop.now()));
-                }
-
+                peers.put(p.getTarget(), peer.state(ack.getState()).touch(loop.now()));
                 return;
             }
 
@@ -462,20 +454,20 @@ public class GossipService implements DatagramBindListener<Channel> {
             if (any instanceof PendingPingReq) {
                 final PendingPingReq p = (PendingPingReq) any;
                 // send back acknowledgement to the source peer.
-                ack(p.getSource(), p.getSourcePingId(), ack.isAlive());
+                ack(p.getSource(), p.getSourcePingId(), ack.getState());
                 return;
             }
         }
 
         private void handlePing(final InetSocketAddress source, final Ping ping) throws Exception {
             reporter.reportReceivedPing(ping);
-            ack(source, ping.getId(), alive.get());
+            ack(source, ping.getId(), alive.get() ? NodeState.ALIVE : NodeState.DEAD);
         }
 
         /* senders */
 
-        private void ack(final InetSocketAddress target, final UUID id, final boolean ok) throws Exception {
-            final Ack ack = new Ack(id, ok, buildGossip());
+        private void ack(final InetSocketAddress target, final UUID id, final NodeState state) throws Exception {
+            final Ack ack = new Ack(id, state, buildGossip());
             send(target, ack);
             reporter.reportSentAck(ack);
         }
@@ -483,30 +475,22 @@ public class GossipService implements DatagramBindListener<Channel> {
         private void pingRequest(final InetSocketAddress peer, final InetSocketAddress target) throws Exception {
             final UUID id = loop.uuid();
             final long now = loop.now();
-
-            pings.put(id, new PendingPing(now, now + pingTimeout, target, true));
-
-            expireIn(pingRequestTimeout, id);
-
             final PingRequest pingRequest = new PingRequest(id, target, buildGossip());
 
+            pings.put(id, new PendingPing(now + pingRequestTimeout, target));
+            expireIn(pingRequestTimeout, id);
             send(peer, pingRequest);
-
             reporter.reportSentPingRequest(pingRequest);
         }
 
         private void ping(final InetSocketAddress target) throws Exception {
             final UUID id = loop.uuid();
             final long now = loop.now();
-
-            pings.put(id, new PendingPing(now, now + pingTimeout, target, false));
-
-            expireIn(pingTimeout, id);
-
             final Ping ping = new Ping(id, buildGossip());
 
+            pings.put(id, new PendingPing(now + pingTimeout, target));
+            expireIn(pingTimeout, id);
             send(target, ping);
-
             reporter.reportSentPing(ping);
         }
 
@@ -525,10 +509,14 @@ public class GossipService implements DatagramBindListener<Channel> {
             final InetSocketAddress address = channel.getBindAddress();
 
             // do not gossip about self, it will only end badly.
-            final NodeFilter filter = and(not(address(address)), younger(30000));
+            final NodeFilter filter = younger(30000);
 
-            for (final Peer v : randomPeers(gossipLimit, filter))
+            for (final Peer v : randomPeers(gossipLimit, filter)) {
+                if (v.getAddress().equals(channel.getBindAddress()))
+                    throw new IllegalStateException("trying to gossip about self");
+
                 result.add(new OtherGossip(address, v.getAddress(), v.getState(), v.getInc()));
+            }
 
             return result;
         }

@@ -20,6 +20,8 @@ import eu.toolchain.swim.async.simulator.SimulatorEventLoop;
 import eu.toolchain.swim.statistics.TallyReporter;
 
 public class TestSimulator {
+    private static final int SERVERS = 20;
+
     @Test
     public void testSomething() throws Exception {
         final Random random = new Random(0);
@@ -49,21 +51,20 @@ public class TestSimulator {
         seeds.add(b);
         seeds.add(c);
 
-        final ChangeListener listener = new ChangeListener() {
+        final ChangeListener<GossipService.Channel> listener = new ChangeListener<GossipService.Channel>() {
             @Override
-            public void peerFound(InetSocketAddress peer) {
-                System.out.println(loop.now() + ": found: " + peer);
+            public void peerFound(GossipService.Channel channel, InetSocketAddress peer) {
+                System.out.println(loop.now() + ":" + channel + ": found: " + peer);
             }
 
             @Override
-            public void peerLost(InetSocketAddress peer) {
-                System.out.println(loop.now() + ": lost: " + peer);
+            public void peerLost(GossipService.Channel channel, InetSocketAddress peer) {
+                System.out.println(loop.now() + ":" + channel + ": lost: " + peer);
             }
         };
 
         final Provider<Boolean> defaultAlive = Providers.ofValue(true);
-        final GossipService service = new GossipService(loop, seeds, defaultAlive, random, reporter,
-                ChangeListener.NOOP);
+        final GossipService service = new GossipService(loop, seeds, defaultAlive, random, reporter, listener);
 
         final Map<String, GossipService.Channel> channels = new HashMap<>();
 
@@ -71,7 +72,7 @@ public class TestSimulator {
         channels.put("b", loop.bind(b, service.listener(listener).alive(ofAtomic(alive.get("b")))));
         channels.put("c", loop.bind(c, service.alive(ofAtomic(alive.get("c")))));
 
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < SERVERS; i++) {
             channels.put(Integer.toString(i), loop.bind(new InetSocketAddress(6000 + i), service));
         }
 
@@ -83,7 +84,7 @@ public class TestSimulator {
             @Override
             public void run() throws Exception {
                 alive.get("c").set(true);
-                Assert.assertEquals(12, channels.get("b").members().size());
+                Assert.assertEquals(SERVERS + 2, channels.get("b").members().size());
             }
         });
 
@@ -93,7 +94,7 @@ public class TestSimulator {
                 // time for c to leave
                 alive.get("c").set(false);
                 alive.get("a").set(true);
-                Assert.assertEquals(13, channels.get("a").members().size());
+                Assert.assertEquals(SERVERS + 3, channels.get("a").members().size());
             }
         });
 
@@ -105,7 +106,7 @@ public class TestSimulator {
         });
 
         // run for 100000 ticks.
-        loop.run(100000);
+        loop.run(60000);
 
         List<InetSocketAddress> members = channels.get("a").members();
 
@@ -116,19 +117,17 @@ public class TestSimulator {
             }
         });
 
-        Assert.assertEquals(12, members.size());
+        Assert.assertEquals(SERVERS + 2, members.size());
 
-        for (final InetSocketAddress address : members)
-            System.out.println(address);
-
-        System.out.println("             sent pings: " + reporter.getSentPings());
-        System.out.println("         received pings: " + reporter.getReceivedPings());
-        System.out.println("              sent acks: " + reporter.getSentAcks());
-        System.out.println("          received acks: " + reporter.getReceivedAcks());
-        System.out.println("     sent ping requests: " + reporter.getSentPingRequest());
-        System.out.println("                 expire: " + reporter.getExpire());
-        System.out.println("        non pending ack: " + reporter.getNonPendingAck());
-        System.out.println("        no node for ack: " + reporter.getNoNodeForAck());
-        System.out.println("missing peer for expire: " + reporter.getMissingPeerForExpire());
+        System.out.println("              sent pings: " + reporter.getSentPings());
+        System.out.println("          received pings: " + reporter.getReceivedPings());
+        System.out.println("               sent acks: " + reporter.getSentAcks());
+        System.out.println("           received acks: " + reporter.getReceivedAcks());
+        System.out.println("      sent ping requests: " + reporter.getSentPingRequest());
+        System.out.println("                  expire: " + reporter.getExpire());
+        System.out.println("         non pending ack: " + reporter.getNonPendingAck());
+        System.out.println("         no node for ack: " + reporter.getNoNodeForAck());
+        System.out.println(" missing peer for expire: " + reporter.getMissingPeerForExpire());
+        System.out.println("direct gossip inc errors: " + reporter.getDirectGossipIncErrors());
     }
 }

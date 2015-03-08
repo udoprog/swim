@@ -6,8 +6,6 @@ import lombok.Data;
 
 @Data
 public class PendingPing implements PendingOperation {
-    private final long started;
     private final long expires;
     private final InetSocketAddress target;
-    private final boolean fromRequest;
 }

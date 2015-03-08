@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import eu.toolchain.swim.PendingOperation;
 import eu.toolchain.swim.async.EventLoop;
 import eu.toolchain.swim.messages.Ack;
+import eu.toolchain.swim.messages.DirectGossip;
 import eu.toolchain.swim.messages.Ping;
 import eu.toolchain.swim.messages.PingRequest;
 
@@ -23,6 +24,7 @@ public class TallyReporter implements Reporter {
     private final AtomicLong receivedAcks = new AtomicLong();
     private final AtomicLong sentAcks = new AtomicLong();
     private final AtomicLong sentPingRequests = new AtomicLong();
+    private final AtomicLong directGossipIncErrors = new AtomicLong();
 
     private final EventLoop loop;
 
@@ -60,6 +62,10 @@ public class TallyReporter implements Reporter {
 
     public long getSentPingRequest() {
         return sentPingRequests.get();
+    }
+
+    public long getDirectGossipIncErrors() {
+        return directGossipIncErrors.get();
     }
 
     @Override
@@ -105,5 +111,10 @@ public class TallyReporter implements Reporter {
     @Override
     public void reportSentPingRequest(PingRequest pingRequest) {
         sentPingRequests.incrementAndGet();
+    }
+
+    @Override
+    public void reportDirectGossipIncError(DirectGossip g) {
+        directGossipIncErrors.incrementAndGet();
     }
 }
