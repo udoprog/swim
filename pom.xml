@@ -30,6 +30,18 @@
     </dependency>
 
     <dependency>
+      <groupId>eu.toolchain.serializer</groupId>
+      <artifactId>tiny-serializer-core</artifactId>
+      <version>1.0.1-SNAPSHOT</version>
+    </dependency>
+
+    <dependency>
+      <groupId>eu.toolchain.async</groupId>
+      <artifactId>tiny-async-core</artifactId>
+      <version>1.0.2</version>
+    </dependency>
+
+    <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-api</artifactId>
       <version>1.7.7</version>

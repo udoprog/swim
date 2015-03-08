@@ -36,12 +36,10 @@ public class SimulatorEventLoop implements EventLoop {
     private long delayHigh = 0;
 
     @Override
-    public void bind(final InetSocketAddress address, final DatagramBindListener listener)
-            throws BindException {
+    public void bind(final InetSocketAddress address, final DatagramBindListener listener) throws BindException {
         listener.ready(this, new DatagramBindChannel() {
             @Override
-            public void send(final InetSocketAddress target, final ByteBuffer output)
-                    throws IOException {
+            public void send(final InetSocketAddress target, final ByteBuffer output) throws IOException {
                 final ByteBuffer slice = output.slice();
                 final ByteBuffer buffer = ByteBuffer.allocate(slice.remaining());
                 buffer.put(slice);
@@ -76,8 +74,7 @@ public class SimulatorEventLoop implements EventLoop {
                 });
             }
 
-            private PendingPacket buildPacket(InetSocketAddress source,
-                    InetSocketAddress destination, ByteBuffer buffer) {
+            private PendingPacket buildPacket(InetSocketAddress source, InetSocketAddress destination, ByteBuffer buffer) {
                 // simulate global packet loss.
                 if (packetLoss > 0 && random.nextInt(100) < packetLoss)
                     return null;
@@ -134,16 +131,15 @@ public class SimulatorEventLoop implements EventLoop {
         long bits, val;
 
         do {
-           bits = (random.nextLong() << 1) >>> 1;
-           val = bits % n;
-        } while (bits - val + (n-1) < 0L);
+            bits = (random.nextLong() << 1) >>> 1;
+            val = bits % n;
+        } while (bits - val + (n - 1) < 0L);
 
         return val;
     }
 
     @Override
-    public void bind(final String host, final int port, final DatagramBindListener listener)
-            throws BindException {
+    public void bind(final String host, final int port, final DatagramBindListener listener) throws BindException {
         bind(new InetSocketAddress(host, port), listener);
     }
 
@@ -256,7 +252,8 @@ public class SimulatorEventLoop implements EventLoop {
         return filter;
     }
 
-    public PacketFilter randomDelay(final InetSocketAddress a, final InetSocketAddress b, final long low, final long high) {
+    public PacketFilter randomDelay(final InetSocketAddress a, final InetSocketAddress b, final long low,
+            final long high) {
         if (low < 0 || high < 0 || high <= low)
             throw new IllegalArgumentException(
                     "low and high must be positive or zero, and high is larger or equal to low");

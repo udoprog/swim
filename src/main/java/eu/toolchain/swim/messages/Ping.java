@@ -1,12 +1,12 @@
 package eu.toolchain.swim.messages;
 
-import java.util.Collection;
+import java.util.List;
 import java.util.UUID;
 
 import lombok.Data;
 
 @Data
-public class Ping {
+public class Ping implements Message {
     private final UUID id;
-    private final Collection<Gossip> gossip;
+    private final List<Gossip> gossip;
 }

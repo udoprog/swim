@@ -1,5 +1,13 @@
 package eu.toolchain.swim;
 
+import static eu.toolchain.swim.NodeFilters.address;
+import static eu.toolchain.swim.NodeFilters.and;
+import static eu.toolchain.swim.NodeFilters.any;
+import static eu.toolchain.swim.NodeFilters.not;
+import static eu.toolchain.swim.NodeFilters.or;
+import static eu.toolchain.swim.NodeFilters.state;
+import static eu.toolchain.swim.NodeFilters.younger;
+
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
@@ -16,27 +24,33 @@ import java.util.Random;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
+import eu.toolchain.serializer.Serializer;
+import eu.toolchain.serializer.io.ByteBufferSerialReader;
+import eu.toolchain.serializer.io.ByteBufferSerialWriter;
 import eu.toolchain.swim.async.DatagramBindChannel;
 import eu.toolchain.swim.async.EventLoop;
 import eu.toolchain.swim.async.Task;
 import eu.toolchain.swim.messages.Ack;
 import eu.toolchain.swim.messages.Gossip;
+import eu.toolchain.swim.messages.Message;
+import eu.toolchain.swim.messages.MyStateGossip;
+import eu.toolchain.swim.messages.OtherStateGossip;
 import eu.toolchain.swim.messages.Ping;
 import eu.toolchain.swim.messages.PingReq;
-import eu.toolchain.swim.serializers.AckSerializer;
-import eu.toolchain.swim.serializers.PingReqSerializer;
-import eu.toolchain.swim.serializers.PingSerializer;
-import eu.toolchain.swim.serializers.Serializer;
+import eu.toolchain.swim.messages.Serializers;
 
 @Slf4j
 @Data
 public class GossipServiceListener {
-    private static final byte PING = 0;
-    private static final byte ACK = 1;
-    private static final byte PINGREQ = 2;
+    private static final NodeFilter ALIVE_OR_SUSPECT = or(NodeFilters.state(NodeState.SUSPECT), state(NodeState.ALIVE));
+
+    private static final long DEFAULT_EXPIRE_TIMER = 1000;
+    private static final long PEER_TIMEOUT = 30000;
 
     private final EventLoop loop;
     private final DatagramBindChannel channel;
@@ -44,13 +58,21 @@ public class GossipServiceListener {
     private final Provider<Boolean> alive;
     private final Random random;
 
-    private final Map<InetSocketAddress, NodeData> nodes = new ConcurrentHashMap<>();
+    private final Serializers s = new Serializers();
+    private final Serializer<Message> message = s.message();
+
+    private final Map<InetSocketAddress, Peer> peers = new ConcurrentHashMap<>();
+    private final AtomicReference<Peer> local = new AtomicReference<>();
+
     private final Set<Gossip> gossip = new HashSet<>();
+
+    private final long expireTimer = DEFAULT_EXPIRE_TIMER;
+    private final long peerTimeout = PEER_TIMEOUT;
 
     /**
      * Maintained lists of random pools to make sure entries are fetched uniformly randomly.
      */
-    private final Map<NodeFilter, Queue<NodeData>> randomPools = new HashMap<>();
+    private final Map<NodeFilter, Queue<Peer>> randomPools = new HashMap<>();
 
     /* pending pings */
     private Map<UUID, PendingOperation> pending = new HashMap<>();
@@ -60,40 +82,46 @@ public class GossipServiceListener {
 
     private final ByteBuffer output = ByteBuffer.allocate(0xffff);
 
+    public List<InetSocketAddress> members() {
+        final List<InetSocketAddress> members = new ArrayList<>();
+
+        for (final Peer data : peers.values()) {
+            if (data.isAlive())
+                members.add(data.getAddress());
+        }
+
+        return members;
+    }
+
     public void start() {
         for (InetSocketAddress seed : seeds)
-            nodes.put(seed, new NodeData(loop, seed));
+            peers.put(seed, new Peer(seed, loop.now()));
 
-        pingRandom();
+        // local node
+        local.set(new Peer(channel.getBindAddress(), NodeState.ALIVE, 1, loop.now()));
 
-        loop.schedule(2000, new Task() {
+        loop.schedule(0, new Task() {
             @Override
             public void run() throws Exception {
                 expireOperations(loop.now());
-                pingRandom();
-                loop.schedule(2000, this);
+
+                final Collection<Peer> peers = randomPeers(10, any());
+
+                for (Peer node : peers) {
+                    try {
+                        ping(node.getAddress());
+                    } catch (Exception e) {
+                        log.error("failed to send ping: " + node, e);
+                    }
+                }
+
+                loop.schedule(expireTimer, this);
             }
         });
     }
 
     void read(InetSocketAddress source, ByteBuffer input) throws Exception {
-        final byte type = input.get();
-
-        final Collection<Gossip> payloads = receive(source, input, type);
-
-        handleGossip(payloads);
-    }
-
-    private void pingRandom() {
-        final Collection<NodeData> peers = randomPeers(10, NodeFilters.any());
-
-        for (NodeData node : peers) {
-            try {
-                sendPing(node.getAddress());
-            } catch (Exception e) {
-                log.error("failed to send ping: " + node, e);
-            }
-        }
+        handleGossip(receive(source, input));
     }
 
     private void expireOperations(final long now) throws Exception {
@@ -113,92 +141,122 @@ public class GossipServiceListener {
             log.debug("{}: EXPIRE: {}", loop.now(), expire);
 
             if (expire instanceof PendingPing) {
-                final PendingPing p = (PendingPing) expire;
-
-                final NodeData data = this.nodes.get(p.getTarget());
-
-                if (data == null) {
-                    log.warn("No such target: {}", p.getTarget());
-                    continue;
-                }
-
-                data.setState(NodeState.SUSPECT);
+                expirePendingPing((PendingPing) expire);
+                continue;
             }
+
+            if (expire instanceof PendingPingReq) {
+                expirePendingPingReq((PendingPingReq) expire);
+                continue;
+            }
+        }
+
+        for (final Peer p : new ArrayList<>(peers.values())) {
+            if (p.getUpdated() + peerTimeout < now)
+                continue;
+
+            // don't remove seed nodes
+            if (p.isSeed())
+                continue;
+
+            log.warn("{}:{}: Removing peer {}, haven't seen them for {} seconds", channel.getBindAddress(), now, p,
+                    TimeUnit.SECONDS.convert(peerTimeout, TimeUnit.MILLISECONDS));
+            peers.remove(p.getAddress());
         }
     }
 
-    private Collection<Gossip> receive(InetSocketAddress source, final ByteBuffer input, byte type) throws Exception {
-        switch (type) {
-        case PING:
-            final Ping ping = PingSerializer.get().deserialize(input);
-            handlePing(source, ping);
-            return ping.getGossip();
-        case ACK:
-            final Ack ack = AckSerializer.get().deserialize(input);
-            handleAck(source, ack);
-            return ack.getGossip();
-        case PINGREQ:
-            final PingReq pingReq = PingReqSerializer.get().deserialize(input);
-            handlePingReq(source, pingReq);
-            return pingReq.getGossip();
-        default:
-            throw new RuntimeException("Unsupported message type: " + Integer.toHexString(0xff & type));
+    private void expirePendingPingReq(PendingPingReq expired) throws Exception {
+        final Peer data = this.peers.get(expired.getTarget());
+
+        if (data == null) {
+            log.warn("No such target: {}", expired.getTarget());
+            return;
         }
+
+        peers.put(expired.getTarget(), data.update(NodeState.SUSPECT, loop.now()));
+        ack(expired.getSource(), expired.getPingId(), false);
+    }
+
+    private void expirePendingPing(PendingPing expired) throws Exception {
+        final Peer data = this.peers.get(expired.getTarget());
+
+        if (data == null) {
+            log.warn("No such target: {}", expired.getTarget());
+            return;
+        }
+
+        // select a random peer, that is _not_ the just recently pinged address.
+        final Peer node = randomPeers(1, not(address(expired.getTarget()))).iterator().next();
+
+        pingRequest(node.getAddress(), expired.getTarget());
+    }
+
+    private Collection<Gossip> receive(InetSocketAddress source, final ByteBuffer input) throws Exception {
+        final ByteBufferSerialReader reader = new ByteBufferSerialReader(input);
+
+        final Message message = this.message.deserialize(reader);
+
+        if (message instanceof Ping) {
+            handlePing(source, (Ping) message);
+        } else if (message instanceof Ack) {
+            handleAck(source, (Ack) message);
+        } else if (message instanceof PingReq) {
+            handlePingReq(source, (PingReq) message);
+        } else {
+            throw new IllegalArgumentException("Invalid message: " + message);
+        }
+
+        final Peer n = peers.get(source);
+
+        if (n != null)
+            peers.put(source, n.poke(loop.now()));
+
+        return message.getGossip();
     }
 
     /* handlers */
+
     private void handleGossip(Collection<Gossip> payloads) throws Exception {
         for (final Gossip g : payloads) {
-            if (g.getAbout().equals(channel.getBindAddress())) {
-                // TODO: handle
+            if (g instanceof OtherStateGossip) {
+                handleOtherStateGossip((OtherStateGossip) g);
                 continue;
             }
 
-            final NodeData l = nodes.get(g.getAbout());
-
-            if (l == null)
+            if (g instanceof MyStateGossip) {
+                handleMyStateGossip(g);
                 continue;
-
-            updateState(l, g.getState(), g.getInc());
+            }
         }
     }
 
-    private void updateState(final NodeData data, final NodeState state, final long inc) {
-        switch (state) {
-        case ALIVE:
-            if (data.getState() == NodeState.SUSPECT && inc > data.getInc()) {
-                data.setState(NodeState.ALIVE);
-                data.setInc(inc);
-            }
+    private void handleOtherStateGossip(OtherStateGossip g) {
+        final Peer about = handleMyStateGossip(g);
+        about.rumor(g.getSource(), loop.now(), g.getInc(), g.getState());
+    }
 
-            if (data.getState() == NodeState.ALIVE && inc > data.getInc()) {
-                data.setState(NodeState.ALIVE);
-                data.setInc(inc);
-            }
+    private Peer handleMyStateGossip(Gossip g) {
+        Peer about = peers.get(g.getAbout());
 
-            break;
-        case SUSPECT:
-            if (data.getState() == NodeState.SUSPECT && inc > data.getInc()) {
-                data.setState(NodeState.SUSPECT);
-                data.setInc(inc);
-            }
-
-            if (data.getState() == NodeState.ALIVE && inc >= data.getInc()) {
-                data.setState(NodeState.SUSPECT);
-                data.setInc(inc);
-            }
-
-            break;
-        default:
-            break;
+        if (about == null) {
+            about = new Peer(g.getAbout(), g.getState(), g.getInc(), loop.now());
+            peers.put(about.getAddress(), about);
+            about = peers.get(about.getAddress());
         }
+
+        // something fresher than we know.
+        // since this is an incremental update, we know that it has to originate
+        // from the node in question, or someone who has a more recent (direct) picture with that node.
+        if (about.getInc() < g.getInc())
+            peers.put(about.getAddress(), about.update(g.getState(), g.getInc(), loop.now()));
+
+        return about;
     }
 
     private void handlePingReq(InetSocketAddress source, PingReq pingReq) throws Exception {
         log.debug("{}: PING+REQ: {}", loop.now(), pingReq);
-
         final UUID id = UUID.randomUUID();
-        send(PING, pingReq.getTarget(), new Ping(id, buildPayloads()), PingSerializer.get());
+        send(pingReq.getTarget(), new Ping(id, buildGossip()));
         pending.put(id, new PendingPingReq(loop.now(), pingReq.getTarget(), pingReq.getId(), source));
     }
 
@@ -218,14 +276,19 @@ public class GossipServiceListener {
         /* Requests which have been performed from this node. */
         if (any instanceof PendingPing) {
             final PendingPing p = (PendingPing) any;
-            final NodeData data = nodes.get(p.getTarget());
+            final Peer data = peers.get(p.getTarget());
 
             if (data == null) {
                 log.warn("No node for ack: {}", p);
                 return;
             }
 
-            data.setState(ack.toNodeState());
+            if (ack.isOk()) {
+                peers.put(p.getTarget(), data.update(NodeState.ALIVE, loop.now()));
+            } else {
+                peers.put(p.getTarget(), data.update(NodeState.SUSPECT, loop.now()));
+            }
+
             return;
         }
 
@@ -233,44 +296,92 @@ public class GossipServiceListener {
         if (any instanceof PendingPingReq) {
             final PendingPingReq p = (PendingPingReq) any;
             // send back acknowledgement to the source peer.
-            sendAck(p.getSource(), p.getPingId(), ack.isAlive());
+            ack(p.getSource(), p.getPingId(), true);
             return;
         }
     }
 
     private void handlePing(final InetSocketAddress source, final Ping ping) throws Exception {
         log.debug("{}: PING: {}", loop.now(), ping);
-
-        sendAck(source, ping.getId(), alive.get());
+        ack(source, ping.getId(), true);
     }
 
     /* senders */
 
-    private void sendAck(final InetSocketAddress target, final UUID id, boolean alive) throws Exception {
-        send(ACK, target, new Ack(id, alive, buildPayloads()), AckSerializer.get());
+    private void ack(final InetSocketAddress target, final UUID id, final boolean ok) throws Exception {
+        send(target, new Ack(id, ok, buildGossip()));
     }
 
-    private void sendPingRequest(final InetSocketAddress target, final InetSocketAddress peer) throws Exception {
+    private void pingRequest(final InetSocketAddress peer, final InetSocketAddress target) throws Exception {
         final UUID id = UUID.randomUUID();
-        send(PINGREQ, peer, new PingReq(id, target, buildPayloads()), PingReqSerializer.get());
         pending.put(id, new PendingPing(loop.now(), target, true));
+        send(peer, new PingReq(id, target, buildGossip()));
     }
 
-    private void sendPing(final InetSocketAddress target) throws Exception {
+    private void ping(final InetSocketAddress target) throws Exception {
         final UUID id = UUID.randomUUID();
-        send(PING, target, new Ping(id, buildPayloads()), PingSerializer.get());
         pending.put(id, new PendingPing(loop.now(), target, false));
+        send(target, new Ping(id, buildGossip()));
     }
 
-    private Collection<Gossip> buildPayloads() throws Exception {
-        final Set<Gossip> result = new HashSet<>();
+    private List<Gossip> buildGossip() throws Exception {
+        final List<Gossip> result = new ArrayList<>();
+
+        result.add(myState());
+        result.addAll(otherStates());
+
         return result;
     }
 
-    private Collection<NodeData> randomPeers(long k, NodeFilter filter) {
-        final ArrayList<NodeData> result = new ArrayList<>();
+    private List<Gossip> otherStates() {
+        final List<Gossip> result = new ArrayList<>();
 
-        Queue<NodeData> nodes = randomPools.get(filter);
+        final InetSocketAddress address = channel.getBindAddress();
+
+        final NodeFilter filter = and(ALIVE_OR_SUSPECT, younger(loop.now(), 30000));
+
+        for (final Peer v : randomPeers(10, filter))
+            result.add(new OtherStateGossip(address, v.getAddress(), v.getState(), v.getInc()));
+
+        return result;
+    }
+
+    private MyStateGossip myState() {
+        Peer me = local.get();
+
+        if (me == null)
+            throw new IllegalStateException("information about self should never dissapear");
+
+        Peer external = peers.get(me.getAddress());
+
+        final NodeState actual = alive.get() ? NodeState.ALIVE : NodeState.DEAD;
+
+        // has our state changed
+        if (me.getState() != actual || isBadRumorSpreading(me, external, actual)) {
+            me = me.update(actual, me.getInc() + 1, loop.now());
+            local.set(me);
+        }
+
+        return new MyStateGossip(me.getAddress(), me.getState(), me.getInc());
+    }
+
+    private boolean isBadRumorSpreading(Peer node, Peer external, final NodeState actual) {
+        // no opinion
+        if (external == null)
+            return false;
+
+        // external opinion based on outdated inc.
+        if (external.getInc() < node.getInc())
+            return false;
+
+        // external does not match.
+        return external.getState() != actual;
+    }
+
+    private Collection<Peer> randomPeers(long k, NodeFilter filter) {
+        final ArrayList<Peer> result = new ArrayList<>();
+
+        Queue<Peer> nodes = randomPools.get(filter);
 
         while (result.size() < k) {
             if (nodes != null) {
@@ -278,7 +389,11 @@ public class GossipServiceListener {
                     result.add(nodes.poll());
             }
 
-            final List<NodeData> source = peers(filter);
+            final List<Peer> source = peers(filter);
+
+            if (source.isEmpty())
+                return result;
+
             Collections.shuffle(source, random);
             nodes = new LinkedList<>(source);
         }
@@ -289,10 +404,10 @@ public class GossipServiceListener {
         return new HashSet<>(result);
     }
 
-    private List<NodeData> peers(NodeFilter filter) {
-        final List<NodeData> result = new ArrayList<>();
+    private List<Peer> peers(NodeFilter filter) {
+        final List<Peer> result = new ArrayList<>();
 
-        for (final NodeData p : this.nodes.values()) {
+        for (final Peer p : this.peers.values()) {
             if (filter.matches(p))
                 result.add(p);
         }
@@ -300,12 +415,9 @@ public class GossipServiceListener {
         return result;
     }
 
-    private <T> void send(byte type, InetSocketAddress target, T data, Serializer<T> serializer) throws Exception {
-        output.clear();
-        output.put(type);
-        serializer.serialize(output, data);
-        output.flip();
-
-        channel.send(target, output);
+    private void send(InetSocketAddress target, Message data) throws Exception {
+        final ByteBufferSerialWriter output = new ByteBufferSerialWriter();
+        message.serialize(output, data);
+        channel.send(target, output.buffer());
     }
 }
