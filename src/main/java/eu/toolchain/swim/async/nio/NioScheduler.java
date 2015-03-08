@@ -23,7 +23,8 @@ public class NioScheduler {
     private final long granularity;
     private final EventLoop loop;
 
-    private final PriorityQueue<NioScheduledOperation> tasks = new PriorityQueue<>(11, NioScheduledOperation.comparator());
+    private final PriorityQueue<NioScheduledOperation> tasks = new PriorityQueue<>(1000,
+            NioScheduledOperation.comparator());
 
     public void schedule(final long delay, final Task task) {
         long when = loop.now() + delay;
@@ -32,7 +33,7 @@ public class NioScheduler {
     }
 
     public Long next(final long now) {
-        final NioScheduledOperation operation =  tasks.peek();
+        final NioScheduledOperation operation = tasks.peek();
 
         if (operation == null)
             return null;
@@ -42,7 +43,7 @@ public class NioScheduler {
 
     public Task pop(long now) {
         while (true) {
-            final NioScheduledOperation check =  tasks.peek();
+            final NioScheduledOperation check = tasks.peek();
 
             if (check == null || check.getWhen() > now)
                 return null;

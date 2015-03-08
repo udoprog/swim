@@ -26,7 +26,7 @@ import eu.toolchain.swim.async.Task;
 public class SimulatorEventLoop implements EventLoop {
     private final Random random;
 
-    private final PriorityQueue<PendingTask> tasks = new PriorityQueue<>(11, PendingTask.comparator());
+    private final PriorityQueue<PendingTask> tasks = new PriorityQueue<>(1000, PendingTask.comparator());
     private final HashMap<InetSocketAddress, List<ReceivePacket>> receivers = new HashMap<>();
     private final Set<PacketFilter> filters = new HashSet<>();
 
@@ -39,8 +39,15 @@ public class SimulatorEventLoop implements EventLoop {
     private long uuidId = 0;
 
     @Override
-    public void bind(final InetSocketAddress address, final DatagramBindListener listener) throws BindException {
-        listener.ready(this, new DatagramBindChannel() {
+    public <T extends DatagramBindChannel> T bind(final String host, final int port,
+            final DatagramBindListener<T> listener) throws BindException {
+        return bind(new InetSocketAddress(host, port), listener);
+    }
+
+    @Override
+    public <T extends DatagramBindChannel> T bind(final InetSocketAddress address,
+            final DatagramBindListener<T> listener) throws BindException {
+        return listener.ready(new DatagramBindChannel() {
             @Override
             public void send(final InetSocketAddress target, final ByteBuffer output) throws IOException {
                 final ByteBuffer slice = output.slice();
@@ -139,11 +146,6 @@ public class SimulatorEventLoop implements EventLoop {
         } while (bits - val + (n - 1) < 0L);
 
         return val;
-    }
-
-    @Override
-    public void bind(final String host, final int port, final DatagramBindListener listener) throws BindException {
-        bind(new InetSocketAddress(host, port), listener);
     }
 
     @Override
@@ -286,6 +288,22 @@ public class SimulatorEventLoop implements EventLoop {
             @Override
             public PendingPacket filter(PendingPacket p) {
                 if (p.getSource().equals(a) && p.getDestination().equals(b))
+                    return null;
+
+                return p;
+            }
+        };
+
+        filters.add(filter);
+
+        return filter;
+    }
+
+    public PacketFilter block(final InetSocketAddress address) {
+        final PacketFilter filter = new PacketFilter() {
+            @Override
+            public PendingPacket filter(PendingPacket p) {
+                if (p.getSource().equals(address) || p.getDestination().equals(address))
                     return null;
 
                 return p;

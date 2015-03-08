@@ -32,7 +32,8 @@ public class NioEventLoop implements EventLoop {
     }
 
     @Override
-    public void bind(final InetSocketAddress address, final DatagramBindListener listener) throws BindException {
+    public <T extends DatagramBindChannel> T bind(final InetSocketAddress address,
+            final DatagramBindListener<T> listener) throws BindException {
         final DatagramChannel channel;
 
         try {
@@ -43,7 +44,7 @@ public class NioEventLoop implements EventLoop {
             throw new BindException("failed to bind UDP listener", e);
         }
 
-        listener.ready(this, new DatagramBindChannel() {
+        return listener.ready(new DatagramBindChannel() {
             @Override
             public void send(final InetSocketAddress target, final ByteBuffer output) throws IOException {
                 channel.send(output, target);
@@ -69,8 +70,9 @@ public class NioEventLoop implements EventLoop {
     }
 
     @Override
-    public void bind(final String host, final int port, final DatagramBindListener listener) throws BindException {
-        bind(new InetSocketAddress(host, port), listener);
+    public <T extends DatagramBindChannel> T bind(final String host, final int port,
+            final DatagramBindListener<T> listener) throws BindException {
+        return bind(new InetSocketAddress(host, port), listener);
     }
 
     @Override

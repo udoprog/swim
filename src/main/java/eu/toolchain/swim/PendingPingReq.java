@@ -10,6 +10,6 @@ public class PendingPingReq implements PendingOperation {
     private final long started;
     private final long expires;
     private final InetSocketAddress target;
-    private final UUID pingId;
+    private final UUID sourcePingId;
     private final InetSocketAddress source;
 }

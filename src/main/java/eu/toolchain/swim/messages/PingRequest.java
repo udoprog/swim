@@ -7,7 +7,7 @@ import java.util.UUID;
 import lombok.Data;
 
 @Data
-public class PingReq implements Message {
+public class PingRequest implements Message {
     private final UUID id;
     private final InetSocketAddress target;
     private final List<Gossip> gossip;

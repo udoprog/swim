@@ -1,85 +1,114 @@
 package eu.toolchain.swim;
 
+import static eu.toolchain.swim.Providers.ofAtomic;
+
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import org.junit.Assert;
 import org.junit.Test;
 
 import eu.toolchain.swim.async.Task;
-import eu.toolchain.swim.async.simulator.PacketFilter;
 import eu.toolchain.swim.async.simulator.SimulatorEventLoop;
+import eu.toolchain.swim.statistics.TallyReporter;
 
 public class TestSimulator {
     @Test
     public void testSomething() throws Exception {
-        final AtomicBoolean bState = new AtomicBoolean(true);
-
-        /* if this provider provides the value 'false', this node will be considered dead. */
-        final Provider<Boolean> bAlive = new Provider<Boolean>() {
-            @Override
-            public Boolean get() {
-                return bState.get();
-            }
-        };
-
-        final Provider<Boolean> alive = Providers.ofValue(true);
         final Random random = new Random(0);
 
         final SimulatorEventLoop loop = new SimulatorEventLoop(random);
 
+        final TallyReporter reporter = new TallyReporter(loop);
+
+        final Map<String, AtomicBoolean> alive = new HashMap<>();
+
+        alive.put("a", new AtomicBoolean());
+        alive.put("b", new AtomicBoolean());
+        alive.put("c", new AtomicBoolean());
+
         // 5% global packet loss
-        loop.setPacketLoss(20);
+        loop.setPacketLoss(0);
 
         // set a random delay between 10 and 200 ticks.
         loop.setRandomDelay(10, 200);
 
-        final InetSocketAddress a = new InetSocketAddress(5555);
-        final InetSocketAddress b = new InetSocketAddress(5556);
-        final InetSocketAddress c = new InetSocketAddress(5557);
+        final InetSocketAddress a = new InetSocketAddress(5000);
+        final InetSocketAddress b = new InetSocketAddress(5001);
+        final InetSocketAddress c = new InetSocketAddress(5002);
 
         final List<InetSocketAddress> seeds = new ArrayList<>();
         seeds.add(a);
         seeds.add(b);
         seeds.add(c);
 
-        // no traffic from a to b will pass.
-        final PacketFilter b1 = loop.block(b, a);
-        final PacketFilter b2 = loop.block(c, a);
+        final ChangeListener listener = new ChangeListener() {
+            @Override
+            public void peerFound(InetSocketAddress peer) {
+                System.out.println(loop.now() + ": found: " + peer);
+            }
 
-        // traffic from b to c is delayed by 500 ticks.
-        final PacketFilter d1 = loop.delay(b, c, 500);
-        // traffic from c to b is delayed by 700 ticks.
-        final PacketFilter d2 = loop.delay(c, b, 700);
+            @Override
+            public void peerLost(InetSocketAddress peer) {
+                System.out.println(loop.now() + ": lost: " + peer);
+            }
+        };
 
-        final GossipService aService = new GossipService(new ArrayList<InetSocketAddress>(), alive, random);
+        final Provider<Boolean> defaultAlive = Providers.ofValue(true);
+        final GossipService service = new GossipService(loop, seeds, defaultAlive, random, reporter,
+                ChangeListener.NOOP);
 
-        loop.bind(a, aService);
-        loop.bind(b, new GossipService(seeds, bAlive, random));
-        loop.bind(c, new GossipService(seeds, alive, random));
+        final Map<String, GossipService.Channel> channels = new HashMap<>();
+
+        channels.put("a", loop.bind(a, service.alive(ofAtomic(alive.get("a")))));
+        channels.put("b", loop.bind(b, service.listener(listener).alive(ofAtomic(alive.get("b")))));
+        channels.put("c", loop.bind(c, service.alive(ofAtomic(alive.get("c")))));
 
         for (int i = 0; i < 10; i++) {
-            final InetSocketAddress addr = new InetSocketAddress(6000 + i);
-            loop.bind(addr, new GossipService(seeds, alive, random));
+            channels.put(Integer.toString(i), loop.bind(new InetSocketAddress(6000 + i), service));
         }
 
-        // at tick 4000, remove blocks and delays.
-        loop.at(5000, new Task() {
+        alive.get("a").set(true);
+        alive.get("b").set(true);
+
+        // at tick 5000, remove blocks and delays.
+        loop.at(10000, new Task() {
             @Override
             public void run() throws Exception {
-                loop.cancel(b1, b2, d1, d2);
-                bState.set(false);
+                alive.get("c").set(true);
+                Assert.assertEquals(12, channels.get("b").members().size());
             }
         });
 
-        // run for 10000 ticks.
+        loop.at(20000, new Task() {
+            @Override
+            public void run() throws Exception {
+                // time for c to leave
+                alive.get("c").set(false);
+                alive.get("a").set(true);
+                Assert.assertEquals(13, channels.get("a").members().size());
+            }
+        });
+
+        loop.at(40000, new Task() {
+            @Override
+            public void run() throws Exception {
+                loop.block(c);
+            }
+        });
+
+        // run for 100000 ticks.
         loop.run(100000);
 
-        List<InetSocketAddress> members = aService.members();
+        List<InetSocketAddress> members = channels.get("a").members();
+
         Collections.sort(members, new Comparator<InetSocketAddress>() {
             @Override
             public int compare(InetSocketAddress a, InetSocketAddress b) {
@@ -87,7 +116,19 @@ public class TestSimulator {
             }
         });
 
+        Assert.assertEquals(12, members.size());
+
         for (final InetSocketAddress address : members)
             System.out.println(address);
+
+        System.out.println("             sent pings: " + reporter.getSentPings());
+        System.out.println("         received pings: " + reporter.getReceivedPings());
+        System.out.println("              sent acks: " + reporter.getSentAcks());
+        System.out.println("          received acks: " + reporter.getReceivedAcks());
+        System.out.println("     sent ping requests: " + reporter.getSentPingRequest());
+        System.out.println("                 expire: " + reporter.getExpire());
+        System.out.println("        non pending ack: " + reporter.getNonPendingAck());
+        System.out.println("        no node for ack: " + reporter.getNoNodeForAck());
+        System.out.println("missing peer for expire: " + reporter.getMissingPeerForExpire());
     }
 }

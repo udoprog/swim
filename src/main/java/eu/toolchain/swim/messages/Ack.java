@@ -7,7 +7,7 @@ import lombok.Data;
 
 @Data
 public class Ack implements Message {
-    private final UUID id;
-    private final boolean ok;
+    private final UUID pingId;
+    private final boolean alive;
     private final List<Gossip> gossip;
 }

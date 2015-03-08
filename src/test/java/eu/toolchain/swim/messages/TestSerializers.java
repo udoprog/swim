@@ -28,16 +28,16 @@ public class TestSerializers {
 
     @Test
     public void testMessages() throws IOException {
-        roundtrip(new MyStateGossip(addr, NodeState.ALIVE, 40), s.gossip());
-        roundtrip(new OtherStateGossip(addr, addr, NodeState.ALIVE, 40), s.gossip());
+        roundtrip(new DirectGossip(addr, NodeState.ALIVE, 40), s.gossip());
+        roundtrip(new OtherGossip(addr, addr, NodeState.ALIVE, 40), s.gossip());
     }
 
     @Test
     public void testGossip() throws IOException {
         ArrayList<Gossip> gossip = new ArrayList<Gossip>();
 
-        gossip.add(new MyStateGossip(addr, NodeState.ALIVE, 40));
-        gossip.add(new OtherStateGossip(addr, addr, NodeState.ALIVE, 40));
+        gossip.add(new DirectGossip(addr, NodeState.ALIVE, 40));
+        gossip.add(new OtherGossip(addr, addr, NodeState.ALIVE, 40));
 
         roundtrip(new Ping(UUID.randomUUID(), gossip), s.ping());
         roundtrip(new Ack(UUID.randomUUID(), false, gossip), s.ack());

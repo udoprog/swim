@@ -1,5 +1,5 @@
 package eu.toolchain.swim.async;
 
-public interface DatagramBindListener {
-    void ready(EventLoop eventLoop, DatagramBindChannel channel);
+public interface DatagramBindListener<T extends DatagramBindChannel> {
+    T ready(DatagramBindChannel channel);
 }
