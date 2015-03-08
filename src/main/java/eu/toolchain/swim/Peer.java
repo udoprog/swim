@@ -12,6 +12,8 @@ public class Peer {
     // if this amount of nodes think that this node is dead, we are no longer considering it.
     private static final int RUMOR_LIMIT = 2;
 
+    private static final float RUMOR_SUSPICION_LIMIT = 0.5f;
+
     private final InetSocketAddress address;
 
     // current state according to probing.
@@ -96,10 +98,12 @@ public class Peer {
 
             if (rumor.getState() == NodeState.SUSPECT || rumor.getState() == NodeState.DEAD)
                 suspicions += 1;
-
-            if (suspicions >= RUMOR_LIMIT)
-                return false;
         }
+
+        float factor = (float) suspicions / (float) rumors.size();
+
+        if (factor > RUMOR_SUSPICION_LIMIT)
+            return false;
 
         return true;
     }

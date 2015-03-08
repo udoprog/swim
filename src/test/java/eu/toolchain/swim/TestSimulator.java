@@ -37,7 +37,7 @@ public class TestSimulator {
         alive.put("c", new AtomicBoolean());
 
         // 5% global packet loss
-        loop.setPacketLoss(0);
+        loop.setPacketLoss(20);
 
         // set a random delay between 10 and 200 ticks.
         loop.setRandomDelay(10, 200);
@@ -80,7 +80,7 @@ public class TestSimulator {
         alive.get("b").set(true);
 
         // at tick 5000, remove blocks and delays.
-        loop.at(10000, new Task() {
+        loop.at(40000, new Task() {
             @Override
             public void run() throws Exception {
                 alive.get("c").set(true);
@@ -88,7 +88,7 @@ public class TestSimulator {
             }
         });
 
-        loop.at(20000, new Task() {
+        loop.at(60000, new Task() {
             @Override
             public void run() throws Exception {
                 // time for c to leave
@@ -98,7 +98,7 @@ public class TestSimulator {
             }
         });
 
-        loop.at(40000, new Task() {
+        loop.at(80000, new Task() {
             @Override
             public void run() throws Exception {
                 loop.block(c);
@@ -106,7 +106,7 @@ public class TestSimulator {
         });
 
         // run for 100000 ticks.
-        loop.run(60000);
+        loop.run(100000);
 
         List<InetSocketAddress> members = channels.get("a").members();
 
