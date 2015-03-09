@@ -2,6 +2,7 @@ package eu.toolchain.swim;
 
 import java.net.InetSocketAddress;
 import java.util.Arrays;
+import java.util.UUID;
 
 public final class NodeFilters {
     public static NodeFilter state(NodeState state) {
@@ -10,6 +11,10 @@ public final class NodeFilters {
 
     public static NodeFilter address(InetSocketAddress address) {
         return new NodeFilter.Address(address);
+    }
+
+    public static NodeFilter id(UUID id) {
+        return new NodeFilter.ID(id);
     }
 
     public static NodeFilter not(NodeFilter delegate) {

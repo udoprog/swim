@@ -1,13 +1,16 @@
 package eu.toolchain.swim;
 
 import java.net.InetSocketAddress;
+import java.util.UUID;
 
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import eu.toolchain.async.ResolvableFuture;
 
 @Data
 @RequiredArgsConstructor
 public class Peer {
+    private final UUID id;
     private final InetSocketAddress address;
 
     // current state according to probing.
@@ -18,19 +21,33 @@ public class Peer {
 
     private final long updated;
 
-    public Peer(InetSocketAddress address, long now) {
-        this(address, NodeState.SUSPECT, 0, now);
+    private final ResolvableFuture<Void> confirm;
+
+    public Peer(UUID id, InetSocketAddress address, long now) {
+        this(id, address, NodeState.SUSPECT, 0, now, null);
     }
 
     public Peer state(NodeState state) {
-        return new Peer(address, state, inc, updated);
+        if (state == NodeState.ALIVE && confirm != null) {
+            confirm.cancel();
+            return new Peer(id, address, state, inc, updated, null);
+        }
+
+        return new Peer(id, address, state, inc, updated, confirm);
     }
 
     public Peer inc(long inc) {
-        return new Peer(address, state, inc, updated);
+        return new Peer(id, address, state, inc, updated, confirm);
     }
 
     public Peer touch(long now) {
-        return new Peer(address, state, inc, now);
+        return new Peer(id, address, state, inc, now, confirm);
+    }
+
+    public Peer confirm(ResolvableFuture<Void> confirm) {
+        if (this.confirm != null)
+            this.confirm.cancel();
+
+        return new Peer(id, address, state, inc, updated, confirm);
     }
 }

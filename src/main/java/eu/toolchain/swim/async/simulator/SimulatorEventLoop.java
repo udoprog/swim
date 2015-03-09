@@ -14,6 +14,9 @@ import java.util.UUID;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import eu.toolchain.async.AsyncFramework;
+import eu.toolchain.async.ResolvableFuture;
+import eu.toolchain.async.TinyAsync;
 import eu.toolchain.swim.async.BindException;
 import eu.toolchain.swim.async.DatagramBindChannel;
 import eu.toolchain.swim.async.DatagramBindListener;
@@ -25,6 +28,7 @@ import eu.toolchain.swim.async.Task;
 @Slf4j
 public class SimulatorEventLoop implements EventLoop {
     private final Random random;
+    private final AsyncFramework async = TinyAsync.builder().build();
 
     private final PriorityQueue<PendingTask> tasks = new PriorityQueue<>(1000, PendingTask.comparator());
     private final HashMap<InetSocketAddress, List<ReceivePacket>> receivers = new HashMap<>();
@@ -39,15 +43,13 @@ public class SimulatorEventLoop implements EventLoop {
     private long uuidId = 0;
 
     @Override
-    public <T extends DatagramBindChannel> T bind(final String host, final int port,
-            final DatagramBindListener<T> listener) throws BindException {
+    public <T> T bind(final String host, final int port, final DatagramBindListener<T> listener) throws BindException {
         return bind(new InetSocketAddress(host, port), listener);
     }
 
     @Override
-    public <T extends DatagramBindChannel> T bind(final InetSocketAddress address,
-            final DatagramBindListener<T> listener) throws BindException {
-        return listener.ready(new DatagramBindChannel() {
+    public <T> T bind(final InetSocketAddress address, final DatagramBindListener<T> listener) throws BindException {
+        return listener.setup(new DatagramBindChannel() {
             @Override
             public void send(final InetSocketAddress target, final ByteBuffer output) throws IOException {
                 final ByteBuffer slice = output.slice();
@@ -114,11 +116,6 @@ public class SimulatorEventLoop implements EventLoop {
 
                 list.add(listener);
             }
-
-            @Override
-            public InetSocketAddress getBindAddress() {
-                return address;
-            }
         });
     }
 
@@ -149,8 +146,8 @@ public class SimulatorEventLoop implements EventLoop {
     }
 
     @Override
-    public void schedule(final long delay, final Task task) {
-        at(tick + delay, task);
+    public ResolvableFuture<Void> schedule(final long delay, final Task task) {
+        return at(tick + delay, task);
     }
 
     @Override
@@ -167,6 +164,9 @@ public class SimulatorEventLoop implements EventLoop {
         while (true) {
             final PendingTask task = tasks.poll();
 
+            if (!task.getFuture().resolve(null))
+                continue;
+
             if (task == null || task.getTick() >= duration)
                 break;
 
@@ -176,8 +176,10 @@ public class SimulatorEventLoop implements EventLoop {
         }
     }
 
-    public void at(final long tick, final Task task) {
-        tasks.add(new PendingTask(tick, task));
+    public ResolvableFuture<Void> at(final long tick, final Task task) {
+        final ResolvableFuture<Void> future = async.future();
+        tasks.add(new PendingTask(tick, task, future));
+        return future;
     }
 
     private void runTask(final Task task) {
@@ -214,8 +216,10 @@ public class SimulatorEventLoop implements EventLoop {
      *
      * A high point of 0 effectively disabled delay.
      *
-     * @param low Lowest possible delay.
-     * @param high Highest possible delay.
+     * @param low
+     *            Lowest possible delay.
+     * @param high
+     *            Highest possible delay.
      */
     public void setRandomDelay(long low, long high) {
         if (low < 0 || high < 0 || high <= low)

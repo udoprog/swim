@@ -13,6 +13,9 @@ import java.util.Set;
 import java.util.UUID;
 
 import lombok.extern.slf4j.Slf4j;
+import eu.toolchain.async.AsyncFramework;
+import eu.toolchain.async.ResolvableFuture;
+import eu.toolchain.async.TinyAsync;
 import eu.toolchain.swim.async.BindException;
 import eu.toolchain.swim.async.DatagramBindChannel;
 import eu.toolchain.swim.async.DatagramBindListener;
@@ -24,16 +27,16 @@ import eu.toolchain.swim.async.Task;
 public class NioEventLoop implements EventLoop {
     private final HashMap<DatagramChannel, List<ReceivePacket>> receivers = new HashMap<>();
     private final NioScheduler scheduler;
+    private final AsyncFramework async = TinyAsync.builder().build();
 
     private final ByteBuffer input = ByteBuffer.allocate(0xFFFF);
 
     public NioEventLoop() {
-        this.scheduler = new NioScheduler(100, this);
+        this.scheduler = new NioScheduler(this, 100, async);
     }
 
     @Override
-    public <T extends DatagramBindChannel> T bind(final InetSocketAddress address,
-            final DatagramBindListener<T> listener) throws BindException {
+    public <T> T bind(final InetSocketAddress address, final DatagramBindListener<T> listener) throws BindException {
         final DatagramChannel channel;
 
         try {
@@ -44,7 +47,7 @@ public class NioEventLoop implements EventLoop {
             throw new BindException("failed to bind UDP listener", e);
         }
 
-        return listener.ready(new DatagramBindChannel() {
+        return listener.setup(new DatagramBindChannel() {
             @Override
             public void send(final InetSocketAddress target, final ByteBuffer output) throws IOException {
                 channel.send(output, target);
@@ -61,23 +64,17 @@ public class NioEventLoop implements EventLoop {
 
                 list.add(listener);
             }
-
-            @Override
-            public InetSocketAddress getBindAddress() {
-                return address;
-            }
         });
     }
 
     @Override
-    public <T extends DatagramBindChannel> T bind(final String host, final int port,
-            final DatagramBindListener<T> listener) throws BindException {
+    public <T> T bind(final String host, final int port, final DatagramBindListener<T> listener) throws BindException {
         return bind(new InetSocketAddress(host, port), listener);
     }
 
     @Override
-    public void schedule(final long delay, final Task task) {
-        scheduler.schedule(delay, task);
+    public ResolvableFuture<Void> schedule(final long delay, final Task task) {
+        return scheduler.schedule(delay, task);
     }
 
     @Override

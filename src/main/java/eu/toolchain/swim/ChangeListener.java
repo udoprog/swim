@@ -1,9 +1,9 @@
 package eu.toolchain.swim;
 
-import java.net.InetSocketAddress;
+import java.util.UUID;
 
-public interface ChangeListener<T> {
-    public void peerFound(T channel, InetSocketAddress peer);
+public interface ChangeListener {
+    public void peerFound(Gossiper gossiper, UUID peer);
 
-    public void peerLost(T channel, InetSocketAddress peer);
+    public void peerLost(Gossiper gossiper, UUID peer);
 }

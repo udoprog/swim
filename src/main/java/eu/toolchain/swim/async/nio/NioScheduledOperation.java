@@ -1,6 +1,7 @@
 package eu.toolchain.swim.async.nio;
 
 import lombok.Data;
+import eu.toolchain.async.ResolvableFuture;
 import eu.toolchain.swim.async.Task;
 
 @Data
@@ -13,10 +14,7 @@ public class NioScheduledOperation {
 
     private final long when;
     private final Task task;
-
-    public void run() throws Exception {
-        task.run();
-    }
+    private final ResolvableFuture<Void> future;
 
     public static class Comparator implements java.util.Comparator<NioScheduledOperation> {
         private Comparator() {

@@ -1,13 +1,13 @@
 package eu.toolchain.swim.messages;
 
-import java.net.InetSocketAddress;
+import java.util.UUID;
 
 import lombok.Data;
 import eu.toolchain.swim.NodeState;
 
 @Data
 public class DirectGossip implements Gossip {
-    final InetSocketAddress about;
-    final NodeState state;
-    final long inc;
+    private final UUID about;
+    private final NodeState state;
+    private final long inc;
 }

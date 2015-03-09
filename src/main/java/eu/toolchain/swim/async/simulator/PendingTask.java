@@ -1,6 +1,7 @@
 package eu.toolchain.swim.async.simulator;
 
 import lombok.Data;
+import eu.toolchain.async.ResolvableFuture;
 import eu.toolchain.swim.async.Task;
 
 @Data
@@ -9,6 +10,7 @@ public class PendingTask {
 
     private final long tick;
     private final Task task;
+    private final ResolvableFuture<Void> future;
 
     public static Comparator comparator() {
         return comparator;

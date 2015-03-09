@@ -2,6 +2,7 @@ package eu.toolchain.swim;
 
 import java.net.InetSocketAddress;
 import java.util.List;
+import java.util.UUID;
 
 import lombok.Data;
 import eu.toolchain.swim.async.EventLoop;
@@ -16,6 +17,16 @@ public interface NodeFilter {
         @Override
         public boolean matches(EventLoop loop, Peer peer) {
             return !delegate.matches(loop, peer);
+        }
+    }
+
+    @Data
+    public static class ID implements NodeFilter {
+        private final UUID id;
+
+        @Override
+        public boolean matches(EventLoop loop, Peer peer) {
+            return id.equals(peer.getId());
         }
     }
 

@@ -5,11 +5,11 @@ import static eu.toolchain.swim.Providers.ofAtomic;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.Assert;
@@ -51,29 +51,30 @@ public class TestSimulator {
         seeds.add(b);
         seeds.add(c);
 
-        final ChangeListener<GossipService.Channel> listener = new ChangeListener<GossipService.Channel>() {
+        final ChangeListener listener = new ChangeListener() {
             @Override
-            public void peerFound(GossipService.Channel channel, InetSocketAddress peer) {
+            public void peerFound(Gossiper channel, UUID peer) {
                 System.out.println(loop.now() + ":" + channel + ": found: " + peer);
             }
 
             @Override
-            public void peerLost(GossipService.Channel channel, InetSocketAddress peer) {
+            public void peerLost(Gossiper channel, UUID peer) {
                 System.out.println(loop.now() + ":" + channel + ": lost: " + peer);
             }
         };
 
         final Provider<Boolean> defaultAlive = Providers.ofValue(true);
-        final GossipService service = new GossipService(loop, seeds, defaultAlive, random, reporter, listener);
+        final Gossiper.Builder service = Gossiper.builder().loop(loop).seeds(seeds).alive(defaultAlive).random(random)
+                .reporter(reporter).listener(listener);
 
-        final Map<String, GossipService.Channel> channels = new HashMap<>();
+        final Map<String, Gossiper> channels = new HashMap<>();
 
-        channels.put("a", loop.bind(a, service.alive(ofAtomic(alive.get("a")))));
-        channels.put("b", loop.bind(b, service.listener(listener).alive(ofAtomic(alive.get("b")))));
-        channels.put("c", loop.bind(c, service.alive(ofAtomic(alive.get("c")))));
+        channels.put("a", loop.bind(a, service.alive(ofAtomic(alive.get("a"))).build()));
+        channels.put("b", loop.bind(b, service.listener(listener).alive(ofAtomic(alive.get("b"))).build()));
+        channels.put("c", loop.bind(c, service.alive(ofAtomic(alive.get("c"))).build()));
 
         for (int i = 0; i < SERVERS; i++) {
-            channels.put(Integer.toString(i), loop.bind(new InetSocketAddress(6000 + i), service));
+            channels.put(Integer.toString(i), loop.bind(new InetSocketAddress(6000 + i), service.build()));
         }
 
         alive.get("a").set(true);
@@ -108,14 +109,9 @@ public class TestSimulator {
         // run for 100000 ticks.
         loop.run(200000);
 
-        List<InetSocketAddress> members = channels.get("a").members();
+        List<UUID> members = channels.get("a").members();
 
-        Collections.sort(members, new Comparator<InetSocketAddress>() {
-            @Override
-            public int compare(InetSocketAddress a, InetSocketAddress b) {
-                return Integer.compare(a.getPort(), b.getPort());
-            }
-        });
+        Collections.sort(members);
 
         Assert.assertEquals(SERVERS + 2, members.size());
 

@@ -4,11 +4,10 @@ import java.net.InetSocketAddress;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+import java.util.UUID;
 
 import lombok.extern.slf4j.Slf4j;
-import eu.toolchain.swim.GossipService.Channel;
 import eu.toolchain.swim.async.nio.NioEventLoop;
-import eu.toolchain.swim.statistics.TallyReporter;
 
 @Slf4j
 public class App {
@@ -24,25 +23,25 @@ public class App {
 
         final Random random = new Random(0);
 
-        final TallyReporter reporter = new TallyReporter(loop);
-
-        final ChangeListener<GossipService.Channel> listener = new ChangeListener<GossipService.Channel>() {
+        final ChangeListener listener = new ChangeListener() {
             @Override
-            public void peerLost(Channel channel, InetSocketAddress peer) {
+            public void peerLost(Gossiper channel, UUID peer) {
                 log.info("lost: {}", peer);
             }
 
             @Override
-            public void peerFound(Channel channel, InetSocketAddress peer) {
+            public void peerFound(Gossiper channel, UUID peer) {
                 log.info("found: {}", peer);
             }
         };
 
-        final int base = 3000;
+        final int base = 4000;
 
-        loop.bind(new InetSocketAddress(base), new GossipService(loop, seeds, alive, random, reporter, listener));
-        loop.bind(new InetSocketAddress(base + 1), new GossipService(loop, seeds, alive, random, reporter, listener));
-        loop.bind(new InetSocketAddress(base + 2), new GossipService(loop, seeds, alive, random, reporter, listener));
+        final Gossiper.Builder gossiper = Gossiper.builder().listener(listener).loop(loop).seeds(seeds).random(random);
+
+        loop.bind(new InetSocketAddress(base), gossiper.build());
+        loop.bind(new InetSocketAddress(base + 1), gossiper.build());
+        loop.bind(new InetSocketAddress(base + 2), gossiper.build());
 
         loop.run();
 

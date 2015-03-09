@@ -1,11 +1,11 @@
 package eu.toolchain.swim.messages;
 
-import java.net.InetSocketAddress;
+import java.util.UUID;
 
 import eu.toolchain.swim.NodeState;
 
 public interface Gossip {
-    public InetSocketAddress getAbout();
+    public UUID getAbout();
 
     public NodeState getState();
 

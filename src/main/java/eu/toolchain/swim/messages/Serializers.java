@@ -34,46 +34,49 @@ public class Serializers {
         final ArrayList<TypeMapping<? extends Gossip>> mappings = new ArrayList<>();
 
         mappings.add(serializer.type(10, DirectGossip.class, new Serializer<DirectGossip>() {
-            private final Serializer<InetSocketAddress> address = address();
+            private final Serializer<UUID> id = serializer.uuid();
             private final Serializer<NodeState> state = serializer.forEnum(NodeState.values());
             private final Serializer<Long> inc = serializer.longNumber();
 
             @Override
             public void serialize(SerialWriter buffer, DirectGossip value) throws IOException {
-                address.serialize(buffer, value.getAbout());
+                id.serialize(buffer, value.getAbout());
                 state.serialize(buffer, value.getState());
                 inc.serialize(buffer, value.getInc());
             }
 
             @Override
             public DirectGossip deserialize(SerialReader buffer) throws IOException {
-                final InetSocketAddress about = this.address.deserialize(buffer);
+                final UUID id = this.id.deserialize(buffer);
                 final NodeState state = this.state.deserialize(buffer);
                 final long inc = this.inc.deserialize(buffer);
-                return new DirectGossip(about, state, inc);
+                return new DirectGossip(id, state, inc);
             }
         }));
 
         mappings.add(serializer.type(20, OtherGossip.class, new Serializer<OtherGossip>() {
+            private final Serializer<UUID> id = serializer.uuid();
             private final Serializer<InetSocketAddress> address = address();
             private final Serializer<NodeState> state = serializer.forEnum(NodeState.values());
             private final Serializer<Long> inc = serializer.longNumber();
 
             @Override
             public void serialize(SerialWriter buffer, OtherGossip value) throws IOException {
-                address.serialize(buffer, value.getSource());
-                address.serialize(buffer, value.getAbout());
+                id.serialize(buffer, value.getSource());
+                id.serialize(buffer, value.getAbout());
+                address.serialize(buffer, value.getAboutAddress());
                 state.serialize(buffer, value.getState());
                 inc.serialize(buffer, value.getInc());
             }
 
             @Override
             public OtherGossip deserialize(SerialReader buffer) throws IOException {
-                final InetSocketAddress source = this.address.deserialize(buffer);
-                final InetSocketAddress about = this.address.deserialize(buffer);
+                final UUID source = this.id.deserialize(buffer);
+                final UUID about = this.id.deserialize(buffer);
+                final InetSocketAddress aboutAddress = this.address.deserialize(buffer);
                 final NodeState state = this.state.deserialize(buffer);
                 final long inc = this.inc.deserialize(buffer);
-                return new OtherGossip(source, about, state, inc);
+                return new OtherGossip(source, about, aboutAddress, state, inc);
             }
         }));
 

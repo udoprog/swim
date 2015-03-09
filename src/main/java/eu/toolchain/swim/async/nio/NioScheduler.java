@@ -4,6 +4,8 @@ import java.util.PriorityQueue;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import eu.toolchain.async.AsyncFramework;
+import eu.toolchain.async.ResolvableFuture;
 import eu.toolchain.swim.async.EventLoop;
 import eu.toolchain.swim.async.Task;
 
@@ -20,16 +22,19 @@ public class NioScheduler {
     /**
      * The number of milliseconds of granularity (error) that this scheduler allows.
      */
-    private final long granularity;
     private final EventLoop loop;
+    private final long granularity;
+    private final AsyncFramework async;
 
     private final PriorityQueue<NioScheduledOperation> tasks = new PriorityQueue<>(1000,
             NioScheduledOperation.comparator());
 
-    public void schedule(final long delay, final Task task) {
+    public ResolvableFuture<Void> schedule(final long delay, final Task task) {
         long when = loop.now() + delay;
         when = when - (when % granularity);
-        tasks.add(new NioScheduledOperation(when, task));
+        final ResolvableFuture<Void> future = async.future();
+        tasks.add(new NioScheduledOperation(when, task, future));
+        return future;
     }
 
     public Long next(final long now) {
@@ -41,14 +46,20 @@ public class NioScheduler {
         return operation.getWhen() - now;
     }
 
-    public Task pop(long now) {
+    public void pop(long now) {
         while (true) {
             final NioScheduledOperation check = tasks.peek();
 
+            System.out.println(check);
+
             if (check == null || check.getWhen() > now)
-                return null;
+                break;
 
             final NioScheduledOperation run = tasks.poll();
+
+            // not ready
+            if (!run.getFuture().resolve(null))
+                continue;
 
             try {
                 run.getTask().run();
