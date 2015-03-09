@@ -20,7 +20,7 @@ import eu.toolchain.swim.async.simulator.SimulatorEventLoop;
 import eu.toolchain.swim.statistics.TallyReporter;
 
 public class TestSimulator {
-    private static final int SERVERS = 20;
+    private static final int SERVERS = 10;
 
     @Test
     public void testSomething() throws Exception {
@@ -37,7 +37,7 @@ public class TestSimulator {
         alive.put("c", new AtomicBoolean());
 
         // 5% global packet loss
-        loop.setPacketLoss(5);
+        loop.setPacketLoss(0);
 
         // set a random delay between 10 and 200 ticks.
         loop.setRandomDelay(10, 200);

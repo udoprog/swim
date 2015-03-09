@@ -10,5 +10,6 @@ import eu.toolchain.swim.NodeState;
 public class Ack implements Message {
     private final UUID pingId;
     private final NodeState state;
+    private final long inc;
     private final List<Gossip> gossip;
 }

@@ -120,12 +120,14 @@ public class Serializers {
         return new Serializer<Ack>() {
             private final Serializer<UUID> id = serializer.uuid();
             private final Serializer<NodeState> state = serializer.forEnum(NodeState.values());
+            private final Serializer<Long> inc = serializer.longNumber();
             private final Serializer<List<Gossip>> gossip = serializer.list(gossip());
 
             @Override
             public void serialize(SerialWriter buffer, Ack value) throws IOException {
                 id.serialize(buffer, value.getPingId());
                 state.serialize(buffer, value.getState());
+                inc.serialize(buffer, value.getInc());
                 gossip.serialize(buffer, value.getGossip());
             }
 
@@ -133,8 +135,9 @@ public class Serializers {
             public Ack deserialize(SerialReader buffer) throws IOException {
                 final UUID id = this.id.deserialize(buffer);
                 final NodeState state = this.state.deserialize(buffer);
+                final long inc = this.inc.deserialize(buffer);
                 final List<Gossip> gossip = this.gossip.deserialize(buffer);
-                return new Ack(id, state, gossip);
+                return new Ack(id, state, inc, gossip);
             }
         };
     }

@@ -18,6 +18,7 @@ public class App {
 
         final List<InetSocketAddress> seeds = new ArrayList<>();
         seeds.add(new InetSocketAddress(3000));
+        seeds.add(new InetSocketAddress(4000));
 
         final NioEventLoop loop = new NioEventLoop();
 

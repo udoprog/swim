@@ -19,7 +19,7 @@ public class Peer {
     private final long updated;
 
     public Peer(InetSocketAddress address, long now) {
-        this(address, NodeState.UNKNOWN, 0, now);
+        this(address, NodeState.SUSPECT, 0, now);
     }
 
     public Peer state(NodeState state) {
