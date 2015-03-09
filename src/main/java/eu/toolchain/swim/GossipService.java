@@ -55,6 +55,12 @@ public class GossipService implements DatagramBindListener<Channel> {
     private static final long DEFAULT_PING_REQ_TIMEOUT = 1500;
     private static final long DEFAULT_PING_REQ_DELEGATE_TIMEOUT = 1000;
     private static final long DEFAULT_GOSSIP_LIMIT = 20;
+    private static final long DEFAULT_RUMOR_FRESHNESS = 10000;
+
+    // if this amount of nodes think that this node is dead, we are no longer considering it.
+    private static final int DEFAULT_RUMOR_THRESHOLD = 2;
+    // percentage of nodes that should agree, unless limit reached.
+    private static final float DEFAULT_RUMOR_SUSPICION_LIMIT = 0.25f;
 
     private final EventLoop loop;
     private final List<InetSocketAddress> seeds;
@@ -66,6 +72,8 @@ public class GossipService implements DatagramBindListener<Channel> {
     private final Serializers s = new Serializers();
     private final Serializer<Message> message = s.message();
 
+    private final int rumorThreshold = DEFAULT_RUMOR_THRESHOLD;
+    private final float rumorSuspicionLimit = DEFAULT_RUMOR_SUSPICION_LIMIT;
     private final long expireTimer = DEFAULT_EXPIRE_TIMER;
     private final long seedTimer = DEFAULT_SEED_TIMER;
     private final long peerTimeout = PEER_TIMEOUT;
@@ -73,6 +81,7 @@ public class GossipService implements DatagramBindListener<Channel> {
     private final long pingRequestTimeout = DEFAULT_PING_REQ_TIMEOUT;
     private final long pingRequestDelegateTimeout = DEFAULT_PING_REQ_DELEGATE_TIMEOUT;
     private final long gossipLimit = DEFAULT_GOSSIP_LIMIT;
+    private final long rumorFreshness = DEFAULT_RUMOR_FRESHNESS;
 
     public GossipService alive(Provider<Boolean> alive) {
         return new GossipService(loop, seeds, alive, random, reporter, listener);
@@ -102,6 +111,7 @@ public class GossipService implements DatagramBindListener<Channel> {
         private final DatagramBindChannel channel;
 
         private final Map<InetSocketAddress, Peer> peers = new ConcurrentHashMap<>();
+        private final Map<InetSocketAddress, Map<InetSocketAddress, Rumor>> rumors = new ConcurrentHashMap<>();
         private final AtomicReference<Peer> local = new AtomicReference<>();
         private final AtomicReference<Set<InetSocketAddress>> alivePeers = new AtomicReference<>();
 
@@ -139,12 +149,12 @@ public class GossipService implements DatagramBindListener<Channel> {
             if (alive.get())
                 members.add(channel.getBindAddress());
 
-            for (final Peer data : peers.values()) {
-                if (data.getAddress().equals(channel.getBindAddress()))
+            for (final Peer peer : peers.values()) {
+                if (peer.getAddress().equals(channel.getBindAddress()))
                     continue;
 
-                if (data.isAlive())
-                    members.add(data.getAddress());
+                if (isAlive(peer))
+                    members.add(peer.getAddress());
             }
 
             return members;
@@ -158,7 +168,7 @@ public class GossipService implements DatagramBindListener<Channel> {
                 @Override
                 public void run() throws Exception {
                     try {
-                        sendRandomPings();
+                        pingPeers();
                     } catch (Exception e) {
                         log.error("Peer pingin failed", e);
                     }
@@ -206,7 +216,7 @@ public class GossipService implements DatagramBindListener<Channel> {
             }
         }
 
-        private void sendRandomPings() throws Exception {
+        private void pingPeers() throws Exception {
             final Collection<Peer> peers = randomPeers(10, not(address(channel.getBindAddress())));
 
             for (Peer node : peers)
@@ -248,6 +258,8 @@ public class GossipService implements DatagramBindListener<Channel> {
                 log.warn("{}: Removing {} since not seen for {} seconds", channel.getBindAddress(), p,
                         TimeUnit.SECONDS.convert(peerTimeout, TimeUnit.MILLISECONDS));
                 peers.remove(p.getAddress());
+
+                ungossip(p);
             }
         }
 
@@ -259,8 +271,8 @@ public class GossipService implements DatagramBindListener<Channel> {
                 return;
             }
 
-            peers.put(expired.getTarget(), peer.state(NodeState.SUSPECT).touch(loop.now()));
-            ack(expired.getSource(), expired.getSourcePingId(), NodeState.SUSPECT);
+            peers.put(expired.getTarget(), peer.state(NodeState.UNKNOWN));
+            ack(expired.getSource(), expired.getSourcePingId(), NodeState.UNKNOWN);
         }
 
         private void expirePendingPing(UUID id, PendingPing expired) throws Exception {
@@ -363,17 +375,9 @@ public class GossipService implements DatagramBindListener<Channel> {
             Peer about = peers.get(g.getAbout());
 
             if (about == null)
-                about = new Peer(g.getAbout(), NodeState.SUSPECT, 0, now);
+                about = new Peer(g.getAbout(), NodeState.UNKNOWN, 0, now);
 
-            // TODO: there used to be a block here about handling gossip about setting the state of an already existing
-            // peer, should we have it?
-            // Something like:
-            //
-            // if (g.getInc() > bout.getInc())
-            // about = about.state(g.getState()).touch(now);
-
-            about = about.gossip(new Rumor(now, g.getSource(), g.getInc(), g.getState()));
-
+            gossip(about, new Rumor(now, g.getSource(), g.getInc(), g.getState()));
             peers.put(about.getAddress(), about);
         }
 
@@ -439,14 +443,20 @@ public class GossipService implements DatagramBindListener<Channel> {
             /* Requests which have been performed from this node. */
             if (any instanceof PendingPing) {
                 final PendingPing p = (PendingPing) any;
-                final Peer peer = peers.get(p.getTarget());
+                Peer peer = peers.get(p.getTarget());
 
                 if (peer == null) {
                     reporter.reportNoNodeForAck(ack.getPingId(), p.getTarget());
                     return;
                 }
 
-                peers.put(p.getTarget(), peer.state(ack.getState()).touch(loop.now()));
+                peer = peer.state(ack.getState());
+
+                // only update, if state is _known_.
+                if (ack.getState() != NodeState.UNKNOWN)
+                    peer = peer.touch(loop.now());
+
+                peers.put(p.getTarget(), peer);
                 return;
             }
 
@@ -461,7 +471,7 @@ public class GossipService implements DatagramBindListener<Channel> {
 
         private void handlePing(final InetSocketAddress source, final Ping ping) throws Exception {
             reporter.reportReceivedPing(ping);
-            ack(source, ping.getId(), alive.get() ? NodeState.ALIVE : NodeState.DEAD);
+            ack(source, ping.getId(), alive.get() ? NodeState.ALIVE : NodeState.LEAVING);
         }
 
         /* senders */
@@ -529,7 +539,7 @@ public class GossipService implements DatagramBindListener<Channel> {
 
             Peer external = peers.get(me.getAddress());
 
-            final NodeState actual = alive.get() ? NodeState.ALIVE : NodeState.DEAD;
+            final NodeState actual = alive.get() ? NodeState.ALIVE : NodeState.LEAVING;
 
             // has our state changed
             if (me.getState() != actual || isBadRumorSpreading(me, external, actual)) {
@@ -554,6 +564,8 @@ public class GossipService implements DatagramBindListener<Channel> {
         }
 
         private Collection<Peer> randomPeers(long k, NodeFilter filter) {
+            k = Math.min(k, peers.size());
+
             final ArrayList<Peer> result = new ArrayList<>();
 
             Queue<InetSocketAddress> nodes = randomPools.get(filter);
@@ -599,6 +611,65 @@ public class GossipService implements DatagramBindListener<Channel> {
             }
 
             return result;
+        }
+
+        private void gossip(Peer about, Rumor rumor) {
+            Map<InetSocketAddress, Rumor> rumors = this.rumors.get(about.getAddress());
+
+            if (rumors == null) {
+                rumors = new ConcurrentHashMap<>();
+                this.rumors.put(about.getAddress(), rumors);
+                rumors = this.rumors.get(about.getAddress());
+            }
+
+            final Rumor current = rumors.get(rumor.getSource());
+
+            // ignore outdated rumors
+            if (current == null || rumor.getInc() >= current.getInc())
+                rumors.put(rumor.getSource(), rumor);
+        }
+
+        // remove rumors about, and created by the given peer.
+        private void ungossip(Peer peer) {
+            this.rumors.remove(peer.getAddress());
+
+            for (final Map<InetSocketAddress, Rumor> rumors : this.rumors.values())
+                rumors.remove(peer.getAddress());
+        }
+
+        private boolean isAlive(Peer peer) {
+            if (peer.getState() == NodeState.LEAVING)
+                return false;
+
+            final Map<InetSocketAddress, Rumor> rumors = this.rumors.get(peer.getAddress());
+
+            // not enough rumors to base opinion on.
+            if (rumors == null || rumors.size() < rumorThreshold)
+                return peer.getState() == NodeState.ALIVE;
+
+            int suspicions = 0;
+            int total = 0;
+
+            for (final Rumor rumor : rumors.values()) {
+                // ignore old rumors
+                if (rumor.getInc() < peer.getInc())
+                    continue;
+
+                if (rumor.getWhen() + rumorFreshness < loop.now())
+                    continue;
+
+                total += 1;
+
+                if (rumor.getState() == NodeState.UNKNOWN || rumor.getState() == NodeState.LEAVING)
+                    suspicions += 1;
+            }
+
+            float factor = (float) suspicions / (float) total;
+
+            if (factor >= rumorSuspicionLimit)
+                return false;
+
+            return true;
         }
 
         private void send(InetSocketAddress target, Message data) throws Exception {

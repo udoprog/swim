@@ -37,7 +37,7 @@ public class TestSimulator {
         alive.put("c", new AtomicBoolean());
 
         // 5% global packet loss
-        loop.setPacketLoss(20);
+        loop.setPacketLoss(5);
 
         // set a random delay between 10 and 200 ticks.
         loop.setRandomDelay(10, 200);
@@ -106,7 +106,7 @@ public class TestSimulator {
         });
 
         // run for 100000 ticks.
-        loop.run(100000);
+        loop.run(200000);
 
         List<InetSocketAddress> members = channels.get("a").members();
 

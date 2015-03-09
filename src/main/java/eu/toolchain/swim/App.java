@@ -37,7 +37,7 @@ public class App {
             }
         };
 
-        final int base = 5000;
+        final int base = 3000;
 
         loop.bind(new InetSocketAddress(base), new GossipService(loop, seeds, alive, random, reporter, listener));
         loop.bind(new InetSocketAddress(base + 1), new GossipService(loop, seeds, alive, random, reporter, listener));
